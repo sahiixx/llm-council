@@ -1,293 +1,614 @@
 /**
- * Comprehensive unit tests for ChatInterface component
+ * Comprehensive unit tests for frontend/src/components/ChatInterface.jsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import ChatInterface from './ChatInterface';
+
+// Mock child components
+vi.mock('./Stage1', () => ({
+  default: ({ responses }) => (
+    <div data-testid="stage1">{responses.length} responses</div>
+  )
+}));
+
+vi.mock('./Stage2', () => ({
+  default: ({ rankings, labelToModel, aggregateRankings }) => (
+    <div data-testid="stage2">
+      {rankings.length} rankings
+      {aggregateRankings && <span data-testid="aggregate-rankings">Aggregated</span>}
+    </div>
+  )
+}));
+
+vi.mock('./Stage3', () => ({
+  default: ({ finalResponse }) => (
+    <div data-testid="stage3">{finalResponse.response}</div>
+  )
+}));
 
 describe('ChatInterface Component', () => {
   const mockOnSendMessage = vi.fn();
 
-  const defaultProps = {
-    conversation: null,
-    onSendMessage: mockOnSendMessage,
-    isLoading: false,
-  };
-
   beforeEach(() => {
-    mockOnSendMessage.mockClear();
+    vi.clearAllMocks();
   });
 
-  describe('Empty State', () => {
-    it('should show welcome message when no conversation', () => {
-      render(<ChatInterface {...defaultProps} />);
+  describe('Empty States', () => {
+    it('should show welcome message when no conversation selected', () => {
+      render(
+        <ChatInterface
+          conversation={null}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       expect(screen.getByText('Welcome to LLM Council')).toBeInTheDocument();
+      expect(screen.getByText('Create a new conversation to get started')).toBeInTheDocument();
     });
 
-    it('should show start message when conversation exists but no messages', () => {
+    it('should show start conversation message when conversation has no messages', () => {
       const emptyConversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: []
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={emptyConversation} />);
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       expect(screen.getByText('Start a conversation')).toBeInTheDocument();
-    });
-
-    it('should show input form when conversation has no messages', () => {
-      const emptyConversation = {
-        id: 'conv-1',
-        title: 'Test',
-        messages: [],
-      };
-      
-      render(<ChatInterface {...defaultProps} conversation={emptyConversation} />);
-      expect(screen.getByPlaceholderText(/Ask your question/)).toBeInTheDocument();
+      expect(screen.getByText('Ask a question to consult the LLM Council')).toBeInTheDocument();
     });
   });
 
-  describe('Message Rendering', () => {
-    it('should render user messages', () => {
+  describe('Message Display', () => {
+    it('should display user messages', () => {
       const conversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
         messages: [
-          { role: 'user', content: 'Hello, council!' },
-        ],
+          { role: 'user', content: 'Hello, how are you?' }
+        ]
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      expect(screen.getByText('Hello, council!')).toBeInTheDocument();
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       expect(screen.getByText('You')).toBeInTheDocument();
+      expect(screen.getByText('Hello, how are you?')).toBeInTheDocument();
     });
 
-    it('should render assistant messages with stages', () => {
+    it('should display assistant messages with stages', () => {
       const conversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
         messages: [
           { role: 'user', content: 'Question' },
-          { 
+          {
             role: 'assistant',
-            stage1: [{ model: 'model1', response: 'Response 1' }],
-            stage2: [{ model: 'model1', ranking: 'Ranking' }],
+            stage1: [{ model: 'm1', response: 'R1' }],
+            stage2: [{ model: 'm1', ranking: 'Ranking' }],
             stage3: { model: 'chairman', response: 'Final answer' },
-            metadata: {},
-          },
-        ],
+            metadata: { label_to_model: {}, aggregate_rankings: [] }
+          }
+        ]
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       expect(screen.getByText('LLM Council')).toBeInTheDocument();
-      expect(screen.getByText('Stage 1: Individual Responses')).toBeInTheDocument();
+      expect(screen.getByTestId('stage1')).toBeInTheDocument();
+      expect(screen.getByTestId('stage2')).toBeInTheDocument();
+      expect(screen.getByTestId('stage3')).toBeInTheDocument();
     });
 
-    it('should show loading indicators for each stage', () => {
+    it('should display multiple messages in conversation', () => {
       const conversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
         messages: [
-          { 
+          { role: 'user', content: 'First question' },
+          {
             role: 'assistant',
+            stage1: [],
+            stage2: [],
+            stage3: { model: 'chairman', response: 'First answer' }
+          },
+          { role: 'user', content: 'Second question' },
+          {
+            role: 'assistant',
+            stage1: [],
+            stage2: [],
+            stage3: { model: 'chairman', response: 'Second answer' }
+          }
+        ]
+      };
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByText('First question')).toBeInTheDocument();
+      expect(screen.getByText('Second question')).toBeInTheDocument();
+    });
+
+    it('should display loading indicators for stages in progress', () => {
+      const conversation = {
+        id: '1',
+        title: 'Test',
+        messages: [
+          { role: 'user', content: 'Question' },
+          {
+            role: 'assistant',
+            stage1: null,
+            stage2: null,
+            stage3: null,
             loading: {
               stage1: true,
               stage2: false,
-              stage3: false,
-            },
-          },
-        ],
+              stage3: false
+            }
+          }
+        ]
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      expect(screen.getByText(/Collecting individual responses/)).toBeInTheDocument();
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByText(/Running Stage 1/)).toBeInTheDocument();
+    });
+
+    it('should show different loading messages for each stage', () => {
+      const testCases = [
+        { stage1: true, stage2: false, stage3: false, expected: 'Running Stage 1' },
+        { stage1: false, stage2: true, stage3: false, expected: 'Running Stage 2' },
+        { stage1: false, stage2: false, stage3: true, expected: 'Running Stage 3' }
+      ];
+
+      testCases.forEach(({ stage1, stage2, stage3, expected }) => {
+        const conversation = {
+          id: '1',
+          title: 'Test',
+          messages: [
+            { role: 'user', content: 'Q' },
+            {
+              role: 'assistant',
+              stage1: null,
+              stage2: null,
+              stage3: null,
+              loading: { stage1, stage2, stage3 }
+            }
+          ]
+        };
+
+        const { unmount } = render(
+          <ChatInterface
+            conversation={conversation}
+            onSendMessage={mockOnSendMessage}
+            isLoading={false}
+          />
+        );
+
+        expect(screen.getByText(new RegExp(expected))).toBeInTheDocument();
+        unmount();
+      });
     });
   });
 
-  describe('Input Handling', () => {
-    it('should update input value when typing', () => {
-      const conversation = {
-        id: 'conv-1',
+  describe('Input Form', () => {
+    it('should show input form only when conversation is empty', () => {
+      const emptyConversation = {
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: []
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
-      const textarea = screen.getByPlaceholderText(/Ask your question/);
-      fireEvent.change(textarea, { target: { value: 'New message' } });
-      
-      expect(textarea.value).toBe('New message');
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByPlaceholderText(/Ask your question/)).toBeInTheDocument();
+      expect(screen.getByText('Send')).toBeInTheDocument();
     });
 
-    it('should call onSendMessage when form submitted', () => {
-      const conversation = {
-        id: 'conv-1',
+    it('should not show input form when conversation has messages', () => {
+      const conversationWithMessages = {
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: [
+          { role: 'user', content: 'Question' }
+        ]
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
+
+      render(
+        <ChatInterface
+          conversation={conversationWithMessages}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.queryByPlaceholderText(/Ask your question/)).not.toBeInTheDocument();
+    });
+
+    it('should allow typing in textarea', async () => {
+      const emptyConversation = {
+        id: '1',
+        title: 'Test',
+        messages: []
+      };
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       const textarea = screen.getByPlaceholderText(/Ask your question/);
-      fireEvent.change(textarea, { target: { value: 'Test message' } });
-      
-      const sendButton = screen.getByText('Send');
-      fireEvent.click(sendButton);
-      
+      await userEvent.type(textarea, 'Test message');
+
+      expect(textarea).toHaveValue('Test message');
+    });
+
+    it('should send message when Send button clicked', async () => {
+      const emptyConversation = {
+        id: '1',
+        title: 'Test',
+        messages: []
+      };
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      const textarea = screen.getByPlaceholderText(/Ask your question/);
+      await userEvent.type(textarea, 'Test message');
+      await userEvent.click(screen.getByText('Send'));
+
       expect(mockOnSendMessage).toHaveBeenCalledWith('Test message');
     });
 
-    it('should clear input after sending', () => {
-      const conversation = {
-        id: 'conv-1',
+    it('should send message when Enter is pressed', async () => {
+      const emptyConversation = {
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: []
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       const textarea = screen.getByPlaceholderText(/Ask your question/);
-      fireEvent.change(textarea, { target: { value: 'Test' } });
-      fireEvent.click(screen.getByText('Send'));
-      
-      expect(textarea.value).toBe('');
+      await userEvent.type(textarea, 'Test message{Enter}');
+
+      expect(mockOnSendMessage).toHaveBeenCalledWith('Test message');
     });
 
-    it('should submit on Enter key', () => {
-      const conversation = {
-        id: 'conv-1',
+    it('should not send message when Shift+Enter is pressed', async () => {
+      const emptyConversation = {
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: []
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       const textarea = screen.getByPlaceholderText(/Ask your question/);
-      fireEvent.change(textarea, { target: { value: 'Test' } });
-      fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      
-      expect(mockOnSendMessage).toHaveBeenCalledWith('Test');
+      await userEvent.type(textarea, 'Line 1{Shift>}{Enter}{/Shift}Line 2');
+
+      expect(mockOnSendMessage).not.toHaveBeenCalled();
+      expect(textarea).toHaveValue('Line 1\nLine 2');
     });
 
-    it('should not submit on Shift+Enter', () => {
-      const conversation = {
-        id: 'conv-1',
+    it('should clear input after sending message', async () => {
+      const emptyConversation = {
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: []
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
       const textarea = screen.getByPlaceholderText(/Ask your question/);
-      fireEvent.change(textarea, { target: { value: 'Test' } });
-      fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
-      
+      await userEvent.type(textarea, 'Test message');
+      await userEvent.click(screen.getByText('Send'));
+
+      expect(textarea).toHaveValue('');
+    });
+
+    it('should not send empty message', async () => {
+      const emptyConversation = {
+        id: '1',
+        title: 'Test',
+        messages: []
+      };
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      await userEvent.click(screen.getByText('Send'));
+
       expect(mockOnSendMessage).not.toHaveBeenCalled();
     });
 
-    it('should disable send button when loading', () => {
-      const conversation = {
-        id: 'conv-1',
+    it('should not send whitespace-only message', async () => {
+      const emptyConversation = {
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: []
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} isLoading={true} />);
-      
-      const sendButton = screen.getByText('Send');
-      expect(sendButton).toBeDisabled();
-    });
 
-    it('should disable send button when input empty', () => {
-      const conversation = {
-        id: 'conv-1',
-        title: 'Test',
-        messages: [],
-      };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
-      const sendButton = screen.getByText('Send');
-      expect(sendButton).toBeDisabled();
-    });
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
 
-    it('should not send empty messages', () => {
-      const conversation = {
-        id: 'conv-1',
-        title: 'Test',
-        messages: [],
-      };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
       const textarea = screen.getByPlaceholderText(/Ask your question/);
-      fireEvent.change(textarea, { target: { value: '   ' } });
-      fireEvent.click(screen.getByText('Send'));
-      
+      await userEvent.type(textarea, '   ');
+      await userEvent.click(screen.getByText('Send'));
+
       expect(mockOnSendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should disable input when loading', () => {
+      const emptyConversation = {
+        id: '1',
+        title: 'Test',
+        messages: []
+      };
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={true}
+        />
+      );
+
+      const textarea = screen.getByPlaceholderText(/Ask your question/);
+      const sendButton = screen.getByText('Send');
+
+      expect(textarea).toBeDisabled();
+      expect(sendButton).toBeDisabled();
+    });
+
+    it('should disable send button when input is empty', () => {
+      const emptyConversation = {
+        id: '1',
+        title: 'Test',
+        messages: []
+      };
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      const sendButton = screen.getByText('Send');
+      expect(sendButton).toBeDisabled();
     });
   });
 
-  describe('Loading States', () => {
-    it('should show loading indicator when isLoading true', () => {
+  describe('Loading State', () => {
+    it('should display global loading indicator when loading', () => {
       const conversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: [{ role: 'user', content: 'Question' }]
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} isLoading={true} />);
-      expect(screen.getByText(/Consulting the council/)).toBeInTheDocument();
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={true}
+        />
+      );
+
+      expect(screen.getByText('Consulting the council...')).toBeInTheDocument();
     });
 
-    it('should disable textarea when loading', () => {
+    it('should not display global loading indicator when not loading', () => {
       const conversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: [{ role: 'user', content: 'Question' }]
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} isLoading={true} />);
-      
-      const textarea = screen.getByPlaceholderText(/Ask your question/);
-      expect(textarea).toBeDisabled();
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.queryByText('Consulting the council...')).not.toBeInTheDocument();
     });
   });
 
   describe('Edge Cases', () => {
-    it('should handle very long user input', () => {
+    it('should handle very long messages', () => {
+      const longMessage = 'A'.repeat(10000);
       const conversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
-        messages: [],
+        messages: [
+          { role: 'user', content: longMessage }
+        ]
       };
-      
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      
-      const longText = 'A'.repeat(10000);
-      const textarea = screen.getByPlaceholderText(/Ask your question/);
-      fireEvent.change(textarea, { target: { value: longText } });
-      
-      expect(textarea.value).toBe(longText);
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByText(longMessage)).toBeInTheDocument();
     });
 
-    it('should handle many messages', () => {
-      const messages = Array(50).fill(null).map((_, i) => ({
-        role: i % 2 === 0 ? 'user' : 'assistant',
-        content: `Message ${i}`,
-        ...(i % 2 === 1 ? { stage1: [], stage2: [], stage3: {} } : {}),
-      }));
-
+    it('should handle messages with markdown', () => {
+      const markdownMessage = '# Heading\n\n**Bold** and *italic*';
       const conversation = {
-        id: 'conv-1',
+        id: '1',
         title: 'Test',
-        messages,
+        messages: [
+          { role: 'user', content: markdownMessage }
+        ]
       };
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      // ReactMarkdown should render the markdown
+      expect(screen.getByText(/Heading/)).toBeInTheDocument();
+    });
+
+    it('should handle messages with special characters', () => {
+      const specialMessage = 'Test <>&"\' 你好 🌍';
+      const conversation = {
+        id: '1',
+        title: 'Test',
+        messages: [
+          { role: 'user', content: specialMessage }
+        ]
+      };
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByText(specialMessage)).toBeInTheDocument();
+    });
+
+    it('should handle rapid input changes', async () => {
+      const emptyConversation = {
+        id: '1',
+        title: 'Test',
+        messages: []
+      };
+
+      render(
+        <ChatInterface
+          conversation={emptyConversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      const textarea = screen.getByPlaceholderText(/Ask your question/);
       
-      render(<ChatInterface {...defaultProps} conversation={conversation} />);
-      expect(screen.getByText('Message 0')).toBeInTheDocument();
+      // Rapidly type and delete
+      await userEvent.type(textarea, 'Test');
+      await userEvent.clear(textarea);
+      await userEvent.type(textarea, 'Another test');
+
+      expect(textarea).toHaveValue('Another test');
+    });
+
+    it('should handle assistant message with missing stage data', () => {
+      const conversation = {
+        id: '1',
+        title: 'Test',
+        messages: [
+          { role: 'user', content: 'Question' },
+          {
+            role: 'assistant',
+            stage1: null,
+            stage2: null,
+            stage3: null
+          }
+        ]
+      };
+
+      render(
+        <ChatInterface
+          conversation={conversation}
+          onSendMessage={mockOnSendMessage}
+          isLoading={false}
+        />
+      );
+
+      // Should not crash
+      expect(screen.getByText('Question')).toBeInTheDocument();
     });
   });
 });
