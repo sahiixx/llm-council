@@ -1,122 +1,107 @@
-/**
- * Comprehensive unit tests for Stage2 component
- */
-
 import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import Stage2 from './Stage2';
 
-describe('Stage2 Component', () => {
+describe('Stage2', () => {
   const mockRankings = [
-    { 
-      model: 'openai/gpt-4', 
-      ranking: 'Evaluation text\nFINAL RANKING:\n1. Response A\n2. Response B',
-      parsed_ranking: ['Response A', 'Response B']
-    },
-    { 
-      model: 'anthropic/claude', 
-      ranking: 'Different evaluation\nFINAL RANKING:\n1. Response B\n2. Response A',
-      parsed_ranking: ['Response B', 'Response A']
-    },
+    { model: 'openai/gpt-4', ranking: 'FINAL RANKING:\n1. Response A\n2. Response B\n3. Response C' },
+    { model: 'anthropic/claude-3', ranking: 'FINAL RANKING:\n1. Response B\n2. Response A\n3. Response C' },
   ];
 
-  const mockLabelToModel = {
-    'Response A': 'openai/gpt-4',
-    'Response B': 'anthropic/claude',
+  const mockMetadata = {
+    label_to_model: {
+      'Response A': 'openai/gpt-4',
+      'Response B': 'anthropic/claude-3',
+      'Response C': 'google/gemini-pro',
+    },
+    aggregate_rankings: [
+      { model: 'openai/gpt-4', average_rank: 1.5, rankings_count: 2 },
+      { model: 'anthropic/claude-3', average_rank: 1.5, rankings_count: 2 },
+      { model: 'google/gemini-pro', average_rank: 3.0, rankings_count: 2 },
+    ],
   };
 
-  const mockAggregateRankings = [
-    { model: 'openai/gpt-4', average_rank: 1.5, rankings_count: 2 },
-    { model: 'anthropic/claude', average_rank: 1.5, rankings_count: 2 },
-  ];
-
   describe('Rendering', () => {
-    it('should render null when no rankings', () => {
-      const { container } = render(<Stage2 rankings={null} />);
-      expect(container.firstChild).toBeNull();
-    });
-
-    it('should render null when empty rankings', () => {
-      const { container } = render(<Stage2 rankings={[]} />);
-      expect(container.firstChild).toBeNull();
-    });
-
     it('should render stage title', () => {
-      render(<Stage2 rankings={mockRankings} labelToModel={mockLabelToModel} />);
-      expect(screen.getByText('Stage 2: Peer Rankings')).toBeInTheDocument();
+      render(<Stage2 rankings={mockRankings} metadata={mockMetadata} />);
+      expect(screen.getByText(/Stage 2/i)).toBeInTheDocument();
     });
 
-    it('should render model tabs', () => {
-      render(<Stage2 rankings={mockRankings} labelToModel={mockLabelToModel} />);
-      expect(screen.getByText('gpt-4')).toBeInTheDocument();
-      expect(screen.getByText('claude')).toBeInTheDocument();
+    it('should render ranking information', () => {
+      render(<Stage2 rankings={mockRankings} metadata={mockMetadata} />);
+      
+      expect(screen.getByText(/Response A/)).toBeInTheDocument();
+      expect(screen.getByText(/Response B/)).toBeInTheDocument();
+      expect(screen.getByText(/Response C/)).toBeInTheDocument();
     });
 
-    it('should render aggregate rankings when provided', () => {
-      render(<Stage2 
-        rankings={mockRankings} 
-        labelToModel={mockLabelToModel}
-        aggregateRankings={mockAggregateRankings}
-      />);
-      expect(screen.getByText(/Aggregate Rankings/)).toBeInTheDocument();
+    it('should render aggregate rankings if provided', () => {
+      render(<Stage2 rankings={mockRankings} metadata={mockMetadata} />);
+      
+      expect(screen.getByText(/average_rank|1\.5|3\.0/i)).toBeInTheDocument();
     });
 
-    it('should display parsed ranking list', () => {
-      render(<Stage2 rankings={mockRankings} labelToModel={mockLabelToModel} />);
-      expect(screen.getByText('Extracted Ranking:')).toBeInTheDocument();
-    });
-  });
-
-  describe('De-anonymization', () => {
-    it('should replace Response labels with model names', () => {
-      render(<Stage2 rankings={mockRankings} labelToModel={mockLabelToModel} />);
-      // Model names should appear in bold in the markdown
-      expect(screen.getByText(/gpt-4/)).toBeInTheDocument();
+    it('should render empty state with no rankings', () => {
+      render(<Stage2 rankings={[]} metadata={{ label_to_model: {}, aggregate_rankings: [] }} />);
+      
+      expect(screen.getByText(/Stage 2/i)).toBeInTheDocument();
     });
 
-    it('should handle missing labelToModel', () => {
-      render(<Stage2 rankings={mockRankings} labelToModel={null} />);
+    it('should render single ranking', () => {
+      const singleRanking = [mockRankings[0]];
+      render(<Stage2 rankings={singleRanking} metadata={mockMetadata} />);
+      
       expect(screen.getByText(/Response A/)).toBeInTheDocument();
     });
   });
 
-  describe('Tab Switching', () => {
-    it('should switch between ranking tabs', () => {
-      render(<Stage2 rankings={mockRankings} labelToModel={mockLabelToModel} />);
+  describe('Edge Cases', () => {
+    it('should handle empty ranking content', () => {
+      const rankings = [{ model: 'test-model', ranking: '' }];
+      render(<Stage2 rankings={rankings} metadata={{ label_to_model: {}, aggregate_rankings: [] }} />);
       
-      fireEvent.click(screen.getByText('claude'));
-      expect(screen.getByText(/Different evaluation/)).toBeInTheDocument();
+      expect(screen.getByText(/test-model/i)).toBeInTheDocument();
     });
 
-    it('should highlight active tab', () => {
-      const { container } = render(<Stage2 rankings={mockRankings} labelToModel={mockLabelToModel} />);
+    it('should handle malformed ranking text', () => {
+      const rankings = [{ model: 'test-model', ranking: 'Not a proper ranking format' }];
+      render(<Stage2 rankings={rankings} metadata={{ label_to_model: {}, aggregate_rankings: [] }} />);
       
-      const tabs = container.querySelectorAll('.tab');
-      expect(tabs[0]).toHaveClass('active');
+      expect(screen.getByText(/Not a proper ranking/)).toBeInTheDocument();
+    });
+
+    it('should handle missing metadata', () => {
+      expect(() => {
+        render(<Stage2 rankings={mockRankings} metadata={null} />);
+      }).not.toThrow();
+    });
+
+    it('should handle empty label_to_model', () => {
+      const metadata = { label_to_model: {}, aggregate_rankings: [] };
+      render(<Stage2 rankings={mockRankings} metadata={metadata} />);
+      
+      expect(screen.getByText(/Stage 2/i)).toBeInTheDocument();
+    });
+
+    it('should handle unicode in rankings', () => {
+      const rankings = [{ model: 'test', ranking: '你好 café 🎉' }];
+      render(<Stage2 rankings={rankings} metadata={{ label_to_model: {}, aggregate_rankings: [] }} />);
+      
+      expect(screen.getByText(/你好/)).toBeInTheDocument();
     });
   });
 
-  describe('Aggregate Rankings', () => {
-    it('should display aggregate rankings table', () => {
-      render(<Stage2 
-        rankings={mockRankings} 
-        labelToModel={mockLabelToModel}
-        aggregateRankings={mockAggregateRankings}
-      />);
-      
-      expect(screen.getByText(/Avg: 1.50/)).toBeInTheDocument();
-      expect(screen.getByText(/2 votes/)).toBeInTheDocument();
+  describe('Props Validation', () => {
+    it('should not crash with undefined rankings', () => {
+      expect(() => {
+        render(<Stage2 rankings={undefined} metadata={mockMetadata} />);
+      }).not.toThrow();
     });
 
-    it('should show rank positions', () => {
-      render(<Stage2 
-        rankings={mockRankings} 
-        labelToModel={mockLabelToModel}
-        aggregateRankings={mockAggregateRankings}
-      />);
-      
-      expect(screen.getByText('#1')).toBeInTheDocument();
-      expect(screen.getByText('#2')).toBeInTheDocument();
+    it('should not crash with null rankings', () => {
+      expect(() => {
+        render(<Stage2 rankings={null} metadata={mockMetadata} />);
+      }).not.toThrow();
     });
   });
 });

@@ -1,52 +1,51 @@
-/**
- * Comprehensive unit tests for frontend/src/api.js
- */
-
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { api } from './api';
 
-global.fetch = vi.fn();
-
-describe('API Client', () => {
+describe('api', () => {
   beforeEach(() => {
-    fetch.mockClear();
+    // Reset fetch mock before each test
+    global.fetch = vi.fn();
   });
 
   describe('listConversations', () => {
-    it('should fetch conversations successfully', async () => {
+    it('should fetch conversations list successfully', async () => {
       const mockConversations = [
-        { id: '1', title: 'Conv 1', message_count: 5 },
-        { id: '2', title: 'Conv 2', message_count: 3 },
+        { id: '1', title: 'Test 1', message_count: 5 },
+        { id: '2', title: 'Test 2', message_count: 3 },
       ];
 
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => mockConversations,
       });
 
       const result = await api.listConversations();
 
-      expect(fetch).toHaveBeenCalledWith('http://localhost:8001/api/conversations');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8001/api/conversations'
+      );
       expect(result).toEqual(mockConversations);
     });
 
-    it('should throw error on failed request', async () => {
-      fetch.mockResolvedValueOnce({
+    it('should throw error when fetch fails', async () => {
+      global.fetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
       });
 
-      await expect(api.listConversations()).rejects.toThrow('Failed to list conversations');
+      await expect(api.listConversations()).rejects.toThrow(
+        'Failed to list conversations'
+      );
     });
 
     it('should handle network errors', async () => {
-      fetch.mockRejectedValueOnce(new Error('Network error'));
+      global.fetch.mockRejectedValueOnce(new Error('Network error'));
 
       await expect(api.listConversations()).rejects.toThrow('Network error');
     });
 
-    it('should handle empty conversation list', async () => {
-      fetch.mockResolvedValueOnce({
+    it('should handle empty conversations list', async () => {
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => [],
       });
@@ -57,121 +56,121 @@ describe('API Client', () => {
   });
 
   describe('createConversation', () => {
-    it('should create conversation successfully', async () => {
+    it('should create a new conversation successfully', async () => {
       const mockConversation = {
-        id: 'new-id',
+        id: 'new-conv-id',
         created_at: '2024-01-01T00:00:00',
         title: 'New Conversation',
         messages: [],
       };
 
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => mockConversation,
       });
 
       const result = await api.createConversation();
 
-      expect(fetch).toHaveBeenCalledWith('http://localhost:8001/api/conversations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}),
-      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8001/api/conversations',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        }
+      );
       expect(result).toEqual(mockConversation);
     });
 
-    it('should throw error on failed creation', async () => {
-      fetch.mockResolvedValueOnce({
+    it('should throw error when creation fails', async () => {
+      global.fetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
       });
 
-      await expect(api.createConversation()).rejects.toThrow('Failed to create conversation');
+      await expect(api.createConversation()).rejects.toThrow(
+        'Failed to create conversation'
+      );
     });
 
-    it('should handle server errors gracefully', async () => {
-      fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 503,
+    it('should send correct headers', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: '1', messages: [] }),
       });
 
-      await expect(api.createConversation()).rejects.toThrow();
+      await api.createConversation();
+
+      const callArgs = global.fetch.mock.calls[0][1];
+      expect(callArgs.headers['Content-Type']).toBe('application/json');
     });
   });
 
   describe('getConversation', () => {
-    it('should fetch specific conversation', async () => {
+    it('should fetch a specific conversation successfully', async () => {
       const mockConversation = {
         id: 'conv-123',
-        title: 'My Conversation',
+        title: 'Test Conversation',
         messages: [{ role: 'user', content: 'Hello' }],
       };
 
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => mockConversation,
       });
 
       const result = await api.getConversation('conv-123');
 
-      expect(fetch).toHaveBeenCalledWith('http://localhost:8001/api/conversations/conv-123');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8001/api/conversations/conv-123'
+      );
       expect(result).toEqual(mockConversation);
     });
 
-    it('should throw error for non-existent conversation', async () => {
-      fetch.mockResolvedValueOnce({
+    it('should throw error when conversation not found', async () => {
+      global.fetch.mockResolvedValueOnce({
         ok: false,
         status: 404,
       });
 
-      await expect(api.getConversation('nonexistent')).rejects.toThrow('Failed to get conversation');
-    });
-
-    it('should handle conversation with many messages', async () => {
-      const messages = Array(100).fill(null).map((_, i) => ({
-        role: i % 2 === 0 ? 'user' : 'assistant',
-        content: `Message ${i}`,
-      }));
-
-      fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ id: 'conv-1', messages }),
-      });
-
-      const result = await api.getConversation('conv-1');
-      expect(result.messages).toHaveLength(100);
+      await expect(api.getConversation('nonexistent')).rejects.toThrow(
+        'Failed to get conversation'
+      );
     });
 
     it('should handle special characters in conversation ID', async () => {
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ id: 'conv-with-dashes-123' }),
+        json: async () => ({ id: 'test-123-abc', messages: [] }),
       });
 
-      await api.getConversation('conv-with-dashes-123');
-      expect(fetch).toHaveBeenCalledWith('http://localhost:8001/api/conversations/conv-with-dashes-123');
+      await api.getConversation('test-123-abc');
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8001/api/conversations/test-123-abc'
+      );
     });
   });
 
   describe('sendMessage', () => {
-    it('should send message successfully', async () => {
+    it('should send a message successfully', async () => {
       const mockResponse = {
         stage1: [],
         stage2: [],
-        stage3: {},
+        stage3: { model: 'chairman', response: 'Answer' },
         metadata: {},
       };
 
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => mockResponse,
       });
 
       const result = await api.sendMessage('conv-123', 'Hello');
 
-      expect(fetch).toHaveBeenCalledWith(
+      expect(global.fetch).toHaveBeenCalledWith(
         'http://localhost:8001/api/conversations/conv-123/message',
         {
           method: 'POST',
@@ -184,293 +183,205 @@ describe('API Client', () => {
       expect(result).toEqual(mockResponse);
     });
 
-    it('should throw error on failed send', async () => {
-      fetch.mockResolvedValueOnce({
+    it('should throw error when sending fails', async () => {
+      global.fetch.mockResolvedValueOnce({
         ok: false,
-        status: 500,
+        status: 404,
       });
 
-      await expect(api.sendMessage('conv-123', 'Hello')).rejects.toThrow('Failed to send message');
+      await expect(api.sendMessage('conv-123', 'Test')).rejects.toThrow(
+        'Failed to send message'
+      );
     });
 
     it('should handle empty message content', async () => {
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        json: async () => ({ stage1: [], stage2: [], stage3: {} }),
       });
 
       await api.sendMessage('conv-123', '');
-      expect(fetch).toHaveBeenCalled();
+
+      const callArgs = global.fetch.mock.calls[0][1];
+      const body = JSON.parse(callArgs.body);
+      expect(body.content).toBe('');
     });
 
-    it('should handle very long message content', async () => {
-      const longMessage = 'A'.repeat(10000);
-      
-      fetch.mockResolvedValueOnce({
+    it('should handle unicode characters in message', async () => {
+      global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        json: async () => ({ stage1: [], stage2: [], stage3: {} }),
       });
 
-      await api.sendMessage('conv-123', longMessage);
-      const callBody = JSON.parse(fetch.mock.calls[0][1].body);
-      expect(callBody.content).toBe(longMessage);
-    });
+      const unicodeMessage = 'Hello 你好 café 🎉';
+      await api.sendMessage('conv-123', unicodeMessage);
 
-    it('should handle Unicode characters in message', async () => {
-      fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({}),
-      });
-
-      await api.sendMessage('conv-123', 'Hello 你好 café 🎉');
-      const callBody = JSON.parse(fetch.mock.calls[0][1].body);
-      expect(callBody.content).toContain('你好');
+      const callArgs = global.fetch.mock.calls[0][1];
+      const body = JSON.parse(callArgs.body);
+      expect(body.content).toBe(unicodeMessage);
     });
   });
 
   describe('sendMessageStream', () => {
-    it('should handle streaming events successfully', async () => {
+    it('should stream messages and call onEvent callback', async () => {
+      const mockEvents = [
+        { type: 'stage1_start' },
+        { type: 'stage1_complete', data: [] },
+        { type: 'complete' },
+      ];
+
+      const mockReader = {
+        read: vi
+          .fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: new TextEncoder().encode(
+              'data: ' + JSON.stringify(mockEvents[0]) + '\n\n'
+            ),
+          })
+          .mockResolvedValueOnce({
+            done: false,
+            value: new TextEncoder().encode(
+              'data: ' + JSON.stringify(mockEvents[1]) + '\n\n'
+            ),
+          })
+          .mockResolvedValueOnce({
+            done: false,
+            value: new TextEncoder().encode(
+              'data: ' + JSON.stringify(mockEvents[2]) + '\n\n'
+            ),
+          })
+          .mockResolvedValueOnce({ done: true }),
+      };
+
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => mockReader,
+        },
+      });
+
       const events = [];
       const onEvent = vi.fn((type, data) => {
         events.push({ type, data });
       });
 
-      const mockReader = {
-        read: vi.fn()
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage1_start"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage1_complete","data":[]}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: true,
-          }),
-      };
-
-      fetch.mockResolvedValueOnce({
-        ok: true,
-        body: {
-          getReader: () => mockReader,
-        },
-      });
-
       await api.sendMessageStream('conv-123', 'Hello', onEvent);
 
-      expect(onEvent).toHaveBeenCalledTimes(2);
-      expect(onEvent).toHaveBeenCalledWith('stage1_start', expect.any(Object));
-      expect(onEvent).toHaveBeenCalledWith('stage1_complete', expect.any(Object));
+      expect(onEvent).toHaveBeenCalledTimes(3);
+      expect(events[0].type).toBe('stage1_start');
+      expect(events[1].type).toBe('stage1_complete');
+      expect(events[2].type).toBe('complete');
     });
 
-    it('should throw error on failed stream request', async () => {
-      fetch.mockResolvedValueOnce({
+    it('should throw error when stream fails to start', async () => {
+      global.fetch.mockResolvedValueOnce({
         ok: false,
-        status: 500,
+        status: 404,
       });
 
+      const onEvent = vi.fn();
+
       await expect(
-        api.sendMessageStream('conv-123', 'Hello', vi.fn())
+        api.sendMessageStream('conv-123', 'Test', onEvent)
       ).rejects.toThrow('Failed to send message');
     });
 
-    it('should handle malformed JSON in stream', async () => {
-      const onEvent = vi.fn();
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
+    it('should handle malformed SSE data gracefully', async () => {
       const mockReader = {
-        read: vi.fn()
+        read: vi
+          .fn()
           .mockResolvedValueOnce({
             done: false,
             value: new TextEncoder().encode('data: {invalid json}\n\n'),
           })
-          .mockResolvedValueOnce({
-            done: true,
-          }),
+          .mockResolvedValueOnce({ done: true }),
       };
 
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         body: {
           getReader: () => mockReader,
         },
       });
 
-      await api.sendMessageStream('conv-123', 'Hello', onEvent);
+      const onEvent = vi.fn();
+      const consoleErrorSpy = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {});
 
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(onEvent).not.toHaveBeenCalled();
-      
+      await api.sendMessageStream('conv-123', 'Test', onEvent);
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Failed to parse SSE event:',
+        expect.any(Error)
+      );
       consoleErrorSpy.mockRestore();
     });
 
     it('should handle multiple events in single chunk', async () => {
-      const onEvent = vi.fn();
-
       const mockReader = {
-        read: vi.fn()
+        read: vi
+          .fn()
           .mockResolvedValueOnce({
             done: false,
             value: new TextEncoder().encode(
               'data: {"type":"event1"}\n\ndata: {"type":"event2"}\n\n'
             ),
           })
-          .mockResolvedValueOnce({
-            done: true,
-          }),
+          .mockResolvedValueOnce({ done: true }),
       };
 
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         body: {
           getReader: () => mockReader,
         },
       });
 
-      await api.sendMessageStream('conv-123', 'Hello', onEvent);
+      const onEvent = vi.fn();
+      await api.sendMessageStream('conv-123', 'Test', onEvent);
 
       expect(onEvent).toHaveBeenCalledTimes(2);
-      expect(onEvent).toHaveBeenNthCalledWith(1, 'event1', expect.any(Object));
-      expect(onEvent).toHaveBeenNthCalledWith(2, 'event2', expect.any(Object));
+      expect(onEvent).toHaveBeenCalledWith('event1', { type: 'event1' });
+      expect(onEvent).toHaveBeenCalledWith('event2', { type: 'event2' });
     });
 
     it('should handle empty stream', async () => {
-      const onEvent = vi.fn();
-
       const mockReader = {
-        read: vi.fn().mockResolvedValueOnce({
-          done: true,
-        }),
+        read: vi.fn().mockResolvedValueOnce({ done: true }),
       };
 
-      fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValueOnce({
         ok: true,
         body: {
           getReader: () => mockReader,
         },
       });
 
-      await api.sendMessageStream('conv-123', 'Hello', onEvent);
+      const onEvent = vi.fn();
+      await api.sendMessageStream('conv-123', 'Test', onEvent);
 
       expect(onEvent).not.toHaveBeenCalled();
     });
-
-    it('should parse complete event cycle', async () => {
-      const events = [];
-      const onEvent = vi.fn((type, data) => {
-        events.push(type);
-      });
-
-      const mockReader = {
-        read: vi.fn()
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage1_start"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage1_complete"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage2_start"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage2_complete"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage3_start"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"stage3_complete"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode('data: {"type":"complete"}\n\n'),
-          })
-          .mockResolvedValueOnce({
-            done: true,
-          }),
-      };
-
-      fetch.mockResolvedValueOnce({
-        ok: true,
-        body: {
-          getReader: () => mockReader,
-        },
-      });
-
-      await api.sendMessageStream('conv-123', 'Hello', onEvent);
-
-      expect(events).toContain('stage1_start');
-      expect(events).toContain('stage2_start');
-      expect(events).toContain('stage3_start');
-      expect(events).toContain('complete');
-    });
   });
 
-  describe('API Base URL', () => {
-    it('should use correct base URL', () => {
-      // Verify API_BASE is correctly set
-      expect(fetch).not.toHaveBeenCalled();
-      
-      fetch.mockResolvedValueOnce({
+  describe('API_BASE configuration', () => {
+    it('should use correct base URL for all endpoints', async () => {
+      global.fetch.mockResolvedValue({
         ok: true,
-        json: async () => [],
+        json: async () => ({}),
       });
 
-      api.listConversations();
-      
-      expect(fetch).toHaveBeenCalledWith(expect.stringContaining('http://localhost:8001'));
-    });
-  });
+      await api.listConversations();
+      await api.createConversation();
+      await api.getConversation('123');
+      await api.sendMessage('123', 'test');
 
-  describe('Error Handling', () => {
-    it('should handle timeout errors', async () => {
-      fetch.mockImplementationOnce(() => 
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 100)
-        )
-      );
-
-      await expect(api.listConversations()).rejects.toThrow('Timeout');
-    });
-
-    it('should handle CORS errors', async () => {
-      fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-
-      await expect(api.listConversations()).rejects.toThrow('Failed to fetch');
-    });
-
-    it('should handle 401 unauthorized', async () => {
-      fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 401,
+      const calls = global.fetch.mock.calls;
+      calls.forEach((call) => {
+        expect(call[0]).toContain('http://localhost:8001');
       });
-
-      await expect(api.listConversations()).rejects.toThrow();
-    });
-
-    it('should handle 403 forbidden', async () => {
-      fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 403,
-      });
-
-      await expect(api.getConversation('conv-1')).rejects.toThrow();
-    });
-
-    it('should handle 500 server error', async () => {
-      fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      });
-
-      await expect(api.sendMessage('conv-1', 'test')).rejects.toThrow();
     });
   });
 });

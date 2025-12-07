@@ -1,303 +1,389 @@
-/**
- * Comprehensive unit tests for Sidebar component
- */
-
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import Sidebar from './Sidebar';
 
-describe('Sidebar Component', () => {
-  const mockOnSelectConversation = vi.fn();
-  const mockOnNewConversation = vi.fn();
-
-  const defaultProps = {
-    conversations: [],
-    currentConversationId: null,
-    onSelectConversation: mockOnSelectConversation,
-    onNewConversation: mockOnNewConversation,
-  };
-
-  beforeEach(() => {
-    mockOnSelectConversation.mockClear();
-    mockOnNewConversation.mockClear();
-  });
+describe('Sidebar', () => {
+  const mockConversations = [
+    {
+      id: 'conv-1',
+      title: 'Test Conversation 1',
+      message_count: 5,
+      created_at: '2024-01-01T00:00:00',
+    },
+    {
+      id: 'conv-2',
+      title: 'Test Conversation 2',
+      message_count: 3,
+      created_at: '2024-01-02T00:00:00',
+    },
+  ];
 
   describe('Rendering', () => {
     it('should render sidebar with title', () => {
-      render(<Sidebar {...defaultProps} />);
+      render(
+        <Sidebar
+          conversations={[]}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
       expect(screen.getByText('LLM Council')).toBeInTheDocument();
     });
 
     it('should render new conversation button', () => {
-      render(<Sidebar {...defaultProps} />);
-      expect(screen.getByText('+ New Conversation')).toBeInTheDocument();
+      render(
+        <Sidebar
+          conversations={[]}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      expect(
+        screen.getByRole('button', { name: /new conversation/i })
+      ).toBeInTheDocument();
     });
 
-    it('should show empty state when no conversations', () => {
-      render(<Sidebar {...defaultProps} />);
+    it('should render empty state when no conversations', () => {
+      render(
+        <Sidebar
+          conversations={[]}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
       expect(screen.getByText('No conversations yet')).toBeInTheDocument();
     });
 
     it('should render conversation list when conversations exist', () => {
-      const conversations = [
-        { id: '1', title: 'Test Conv 1', message_count: 5 },
-        { id: '2', title: 'Test Conv 2', message_count: 3 },
-      ];
+      render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
 
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      
-      expect(screen.getByText('Test Conv 1')).toBeInTheDocument();
-      expect(screen.getByText('Test Conv 2')).toBeInTheDocument();
-    });
-
-    it('should display message counts', () => {
-      const conversations = [
-        { id: '1', title: 'Conv 1', message_count: 5 },
-      ];
-
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
+      expect(screen.getByText('Test Conversation 1')).toBeInTheDocument();
+      expect(screen.getByText('Test Conversation 2')).toBeInTheDocument();
       expect(screen.getByText('5 messages')).toBeInTheDocument();
+      expect(screen.getByText('3 messages')).toBeInTheDocument();
     });
 
-    it('should handle conversation with zero messages', () => {
-      const conversations = [
-        { id: '1', title: 'New Conv', message_count: 0 },
-      ];
+    it('should highlight active conversation', () => {
+      const { container } = render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId="conv-1"
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
 
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      expect(screen.getByText('0 messages')).toBeInTheDocument();
+      const activeItem = container.querySelector('.conversation-item.active');
+      expect(activeItem).toBeInTheDocument();
+      expect(activeItem).toHaveTextContent('Test Conversation 1');
     });
 
-    it('should use default title when title is missing', () => {
-      const conversations = [
-        { id: '1', title: null, message_count: 0 },
+    it('should not highlight any conversation when currentConversationId is null', () => {
+      const { container } = render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      const activeItems = container.querySelectorAll('.conversation-item.active');
+      expect(activeItems).toHaveLength(0);
+    });
+
+    it('should display default title for conversations without title', () => {
+      const conversationsWithoutTitle = [
+        { id: 'conv-1', message_count: 2, created_at: '2024-01-01' },
       ];
 
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
+      render(
+        <Sidebar
+          conversations={conversationsWithoutTitle}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
       expect(screen.getByText('New Conversation')).toBeInTheDocument();
     });
   });
 
-  describe('Active State', () => {
-    it('should highlight active conversation', () => {
-      const conversations = [
-        { id: '1', title: 'Conv 1', message_count: 5 },
-        { id: '2', title: 'Conv 2', message_count: 3 },
-      ];
+  describe('User Interactions', () => {
+    it('should call onNewConversation when button is clicked', () => {
+      const onNewConversation = vi.fn();
 
-      const { container } = render(
-        <Sidebar {...defaultProps} conversations={conversations} currentConversationId="1" />
+      render(
+        <Sidebar
+          conversations={[]}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={onNewConversation}
+        />
       );
-      
-      const conversationItems = container.querySelectorAll('.conversation-item');
-      expect(conversationItems[0]).toHaveClass('active');
-      expect(conversationItems[1]).not.toHaveClass('active');
+
+      const button = screen.getByRole('button', { name: /new conversation/i });
+      fireEvent.click(button);
+
+      expect(onNewConversation).toHaveBeenCalledTimes(1);
     });
 
-    it('should not highlight any conversation when none selected', () => {
-      const conversations = [
-        { id: '1', title: 'Conv 1', message_count: 5 },
-      ];
+    it('should call onSelectConversation with correct id when conversation is clicked', () => {
+      const onSelectConversation = vi.fn();
 
-      const { container } = render(
-        <Sidebar {...defaultProps} conversations={conversations} currentConversationId={null} />
+      render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId={null}
+          onSelectConversation={onSelectConversation}
+          onNewConversation={vi.fn()}
+        />
       );
-      
-      const conversationItems = container.querySelectorAll('.conversation-item');
-      expect(conversationItems[0]).not.toHaveClass('active');
+
+      const conversation = screen.getByText('Test Conversation 1');
+      fireEvent.click(conversation);
+
+      expect(onSelectConversation).toHaveBeenCalledTimes(1);
+      expect(onSelectConversation).toHaveBeenCalledWith('conv-1');
     });
 
-    it('should update active state when selection changes', () => {
-      const conversations = [
-        { id: '1', title: 'Conv 1', message_count: 5 },
-        { id: '2', title: 'Conv 2', message_count: 3 },
-      ];
+    it('should call onSelectConversation for each different conversation clicked', () => {
+      const onSelectConversation = vi.fn();
 
-      const { container, rerender } = render(
-        <Sidebar {...defaultProps} conversations={conversations} currentConversationId="1" />
+      render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId={null}
+          onSelectConversation={onSelectConversation}
+          onNewConversation={vi.fn()}
+        />
       );
-      
-      let conversationItems = container.querySelectorAll('.conversation-item');
-      expect(conversationItems[0]).toHaveClass('active');
 
-      rerender(
-        <Sidebar {...defaultProps} conversations={conversations} currentConversationId="2" />
+      fireEvent.click(screen.getByText('Test Conversation 1'));
+      fireEvent.click(screen.getByText('Test Conversation 2'));
+
+      expect(onSelectConversation).toHaveBeenCalledTimes(2);
+      expect(onSelectConversation).toHaveBeenNthCalledWith(1, 'conv-1');
+      expect(onSelectConversation).toHaveBeenNthCalledWith(2, 'conv-2');
+    });
+
+    it('should allow clicking on active conversation', () => {
+      const onSelectConversation = vi.fn();
+
+      render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId="conv-1"
+          onSelectConversation={onSelectConversation}
+          onNewConversation={vi.fn()}
+        />
       );
-      
-      conversationItems = container.querySelectorAll('.conversation-item');
-      expect(conversationItems[0]).not.toHaveClass('active');
-      expect(conversationItems[1]).toHaveClass('active');
-    });
-  });
 
-  describe('Interactions', () => {
-    it('should call onNewConversation when new button clicked', () => {
-      render(<Sidebar {...defaultProps} />);
-      
-      const newButton = screen.getByText('+ New Conversation');
-      fireEvent.click(newButton);
-      
-      expect(mockOnNewConversation).toHaveBeenCalledTimes(1);
-    });
+      const activeConversation = screen.getByText('Test Conversation 1');
+      fireEvent.click(activeConversation);
 
-    it('should call onSelectConversation when conversation clicked', () => {
-      const conversations = [
-        { id: 'conv-123', title: 'Test Conv', message_count: 5 },
-      ];
-
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      
-      const conversationItem = screen.getByText('Test Conv');
-      fireEvent.click(conversationItem);
-      
-      expect(mockOnSelectConversation).toHaveBeenCalledWith('conv-123');
-    });
-
-    it('should call onSelectConversation with correct ID for multiple conversations', () => {
-      const conversations = [
-        { id: 'conv-1', title: 'Conv 1', message_count: 5 },
-        { id: 'conv-2', title: 'Conv 2', message_count: 3 },
-      ];
-
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      
-      fireEvent.click(screen.getByText('Conv 2'));
-      expect(mockOnSelectConversation).toHaveBeenCalledWith('conv-2');
-      
-      mockOnSelectConversation.mockClear();
-      
-      fireEvent.click(screen.getByText('Conv 1'));
-      expect(mockOnSelectConversation).toHaveBeenCalledWith('conv-1');
-    });
-
-    it('should handle rapid clicks on new conversation button', () => {
-      render(<Sidebar {...defaultProps} />);
-      
-      const newButton = screen.getByText('+ New Conversation');
-      fireEvent.click(newButton);
-      fireEvent.click(newButton);
-      fireEvent.click(newButton);
-      
-      expect(mockOnNewConversation).toHaveBeenCalledTimes(3);
+      expect(onSelectConversation).toHaveBeenCalledWith('conv-1');
     });
   });
 
   describe('Edge Cases', () => {
-    it('should handle very long conversation titles', () => {
-      const conversations = [
-        { id: '1', title: 'A'.repeat(200), message_count: 5 },
-      ];
+    it('should handle single conversation', () => {
+      render(
+        <Sidebar
+          conversations={[mockConversations[0]]}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
 
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      expect(screen.getByText('A'.repeat(200))).toBeInTheDocument();
+      expect(screen.getByText('Test Conversation 1')).toBeInTheDocument();
+      expect(screen.queryByText('No conversations yet')).not.toBeInTheDocument();
     });
 
-    it('should handle large number of conversations', () => {
-      const conversations = Array(100).fill(null).map((_, i) => ({
+    it('should handle many conversations', () => {
+      const manyConversations = Array.from({ length: 50 }, (_, i) => ({
         id: `conv-${i}`,
         title: `Conversation ${i}`,
         message_count: i,
+        created_at: '2024-01-01',
       }));
 
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      expect(screen.getByText('Conversation 50')).toBeInTheDocument();
-    });
-
-    it('should handle conversations with special characters in title', () => {
-      const conversations = [
-        { id: '1', title: 'Test <>&"\'', message_count: 0 },
-      ];
-
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      expect(screen.getByText('Test <>&"\'')).toBeInTheDocument();
-    });
-
-    it('should handle conversations with Unicode characters', () => {
-      const conversations = [
-        { id: '1', title: 'Hello 你好 café 🎉', message_count: 0 },
-      ];
-
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      expect(screen.getByText('Hello 你好 café 🎉')).toBeInTheDocument();
-    });
-
-    it('should handle conversation with very high message count', () => {
-      const conversations = [
-        { id: '1', title: 'Active Conv', message_count: 99999 },
-      ];
-
-      render(<Sidebar {...defaultProps} conversations={conversations} />);
-      expect(screen.getByText('99999 messages')).toBeInTheDocument();
-    });
-
-    it('should handle undefined currentConversationId', () => {
-      const conversations = [
-        { id: '1', title: 'Conv 1', message_count: 5 },
-      ];
-
       const { container } = render(
-        <Sidebar {...defaultProps} conversations={conversations} currentConversationId={undefined} />
+        <Sidebar
+          conversations={manyConversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
       );
-      
-      const conversationItems = container.querySelectorAll('.conversation-item');
-      expect(conversationItems[0]).not.toHaveClass('active');
+
+      const items = container.querySelectorAll('.conversation-item');
+      expect(items).toHaveLength(50);
+    });
+
+    it('should handle conversations with zero messages', () => {
+      const conversations = [
+        { id: 'conv-1', title: 'Empty Conv', message_count: 0 },
+      ];
+
+      render(
+        <Sidebar
+          conversations={conversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('0 messages')).toBeInTheDocument();
+    });
+
+    it('should handle very long conversation titles', () => {
+      const longTitle = 'A'.repeat(200);
+      const conversations = [
+        { id: 'conv-1', title: longTitle, message_count: 1 },
+      ];
+
+      render(
+        <Sidebar
+          conversations={conversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText(longTitle)).toBeInTheDocument();
+    });
+
+    it('should handle special characters in titles', () => {
+      const specialTitle = '<script>alert("xss")</script> & "quotes"';
+      const conversations = [
+        { id: 'conv-1', title: specialTitle, message_count: 1 },
+      ];
+
+      render(
+        <Sidebar
+          conversations={conversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText(specialTitle)).toBeInTheDocument();
+    });
+
+    it('should handle unicode characters in titles', () => {
+      const unicodeTitle = 'Test 你好 café 🎉';
+      const conversations = [
+        { id: 'conv-1', title: unicodeTitle, message_count: 1 },
+      ];
+
+      render(
+        <Sidebar
+          conversations={conversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText(unicodeTitle)).toBeInTheDocument();
+    });
+  });
+
+  describe('Props Validation', () => {
+    it('should work with all required props', () => {
+      expect(() => {
+        render(
+          <Sidebar
+            conversations={[]}
+            currentConversationId={null}
+            onSelectConversation={vi.fn()}
+            onNewConversation={vi.fn()}
+          />
+        );
+      }).not.toThrow();
+    });
+
+    it('should handle string conversation IDs', () => {
+      render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId="conv-1"
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('Test Conversation 1').closest('.conversation-item')).toHaveClass('active');
+    });
+
+    it('should handle numeric conversation IDs', () => {
+      const conversations = [
+        { id: 123, title: 'Numeric ID', message_count: 1 },
+      ];
+
+      const onSelectConversation = vi.fn();
+
+      render(
+        <Sidebar
+          conversations={conversations}
+          currentConversationId={123}
+          onSelectConversation={onSelectConversation}
+          onNewConversation={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Numeric ID'));
+      expect(onSelectConversation).toHaveBeenCalledWith(123);
     });
   });
 
   describe('Accessibility', () => {
-    it('should have clickable conversation items', () => {
-      const conversations = [
-        { id: '1', title: 'Conv 1', message_count: 5 },
-      ];
-
-      const { container } = render(
-        <Sidebar {...defaultProps} conversations={conversations} />
-      );
-      
-      const conversationItem = container.querySelector('.conversation-item');
-      expect(conversationItem).toBeInTheDocument();
-    });
-
-    it('should have clickable new conversation button', () => {
-      render(<Sidebar {...defaultProps} />);
-      
-      const button = screen.getByText('+ New Conversation').closest('button');
-      expect(button).toBeInTheDocument();
-      expect(button.tagName).toBe('BUTTON');
-    });
-  });
-
-  describe('Re-rendering', () => {
-    it('should update when conversations prop changes', () => {
-      const { rerender } = render(
-        <Sidebar {...defaultProps} conversations={[]} />
-      );
-      
-      expect(screen.getByText('No conversations yet')).toBeInTheDocument();
-      
-      rerender(
-        <Sidebar 
-          {...defaultProps} 
-          conversations={[{ id: '1', title: 'New Conv', message_count: 0 }]} 
+    it('should have accessible structure', () => {
+      render(
+        <Sidebar
+          conversations={mockConversations}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
         />
       );
-      
-      expect(screen.queryByText('No conversations yet')).not.toBeInTheDocument();
-      expect(screen.getByText('New Conv')).toBeInTheDocument();
+
+      expect(screen.getByRole('button')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'LLM Council' })).toBeInTheDocument();
     });
 
-    it('should not re-render unnecessarily when props unchanged', () => {
-      const conversations = [{ id: '1', title: 'Conv 1', message_count: 5 }];
-      
-      const { rerender } = render(
-        <Sidebar {...defaultProps} conversations={conversations} />
+    it('should allow keyboard navigation to button', () => {
+      render(
+        <Sidebar
+          conversations={[]}
+          currentConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+        />
       );
-      
-      rerender(
-        <Sidebar {...defaultProps} conversations={conversations} />
-      );
-      
-      expect(screen.getByText('Conv 1')).toBeInTheDocument();
+
+      const button = screen.getByRole('button');
+      button.focus();
+      expect(button).toHaveFocus();
     });
   });
 });
