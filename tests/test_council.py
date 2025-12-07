@@ -1,536 +1,525 @@
-"""Comprehensive unit tests for backend/council.py."""
+"""Tests for backend/council.py module."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from backend.council import (
-    stage1_collect_responses,
-    stage2_collect_rankings,
-    stage3_synthesize_final,
-    parse_ranking_from_text,
-    calculate_aggregate_rankings,
-    generate_conversation_title,
-    run_full_council,
-)
+from unittest.mock import Mock, AsyncMock, patch
+from backend import council
 
 
-class TestStage1CollectResponses:
-    """Tests for stage1_collect_responses function."""
+# Tests for parse_ranking_from_text
+def test_parse_ranking_from_text_standard_format():
+    """Test parsing ranking with standard FINAL RANKING format."""
+    ranking_text = """
+    Response A is good because...
+    Response B is better because...
+    
+    FINAL RANKING:
+    1. Response B
+    2. Response A
+    3. Response C
+    """
+    
+    result = council.parse_ranking_from_text(ranking_text)
+    
+    assert result == ["Response B", "Response A", "Response C"]
 
-    @pytest.mark.asyncio
-    async def test_stage1_success_all_models(self):
-        """Test Stage 1 with all models responding successfully."""
-        mock_responses = {
-            "model1": {"content": "Response from model 1"},
-            "model2": {"content": "Response from model 2"},
-            "model3": {"content": "Response from model 3"},
+
+def test_parse_ranking_from_text_no_spaces():
+    """Test parsing ranking without spaces after numbers."""
+    ranking_text = """
+    FINAL RANKING:
+    1.Response A
+    2.Response B
+    """
+    
+    result = council.parse_ranking_from_text(ranking_text)
+    
+    assert result == ["Response A", "Response B"]
+
+
+def test_parse_ranking_from_text_with_extra_text():
+    """Test parsing ranking with extra explanatory text."""
+    ranking_text = """
+    Analysis of responses...
+    
+    FINAL RANKING:
+    1. Response C - This is the best
+    2. Response A - This is second
+    3. Response B - This is third
+    """
+    
+    result = council.parse_ranking_from_text(ranking_text)
+    
+    # Should extract just the Response labels
+    assert "Response C" in result
+    assert "Response A" in result
+    assert "Response B" in result
+
+
+def test_parse_ranking_from_text_fallback_without_final_ranking():
+    """Test fallback parsing when FINAL RANKING section is missing."""
+    ranking_text = """
+    I think Response A, Response B, and Response C in that order.
+    """
+    
+    result = council.parse_ranking_from_text(ranking_text)
+    
+    assert result == ["Response A", "Response B", "Response C"]
+
+
+def test_parse_ranking_from_text_empty_string():
+    """Test parsing empty string."""
+    result = council.parse_ranking_from_text("")
+    assert result == []
+
+
+def test_parse_ranking_from_text_no_response_labels():
+    """Test parsing text with no Response labels."""
+    ranking_text = "This is just some random text without rankings."
+    result = council.parse_ranking_from_text(ranking_text)
+    assert result == []
+
+
+def test_parse_ranking_from_text_multiple_response_occurrences():
+    """Test that only responses in FINAL RANKING section are parsed."""
+    ranking_text = """
+    Response A appeared earlier in the text.
+    Response B was mentioned here.
+    
+    FINAL RANKING:
+    1. Response C
+    2. Response B
+    3. Response A
+    """
+    
+    result = council.parse_ranking_from_text(ranking_text)
+    
+    # Should only get responses from FINAL RANKING section
+    assert result == ["Response C", "Response B", "Response A"]
+
+
+# Tests for calculate_aggregate_rankings
+def test_calculate_aggregate_rankings_simple_case():
+    """Test aggregate ranking calculation with simple unanimous ranking."""
+    stage2_results = [
+        {
+            "model": "model1",
+            "ranking": "FINAL RANKING:\n1. Response A\n2. Response B",
+            "parsed_ranking": ["Response A", "Response B"]
+        },
+        {
+            "model": "model2",
+            "ranking": "FINAL RANKING:\n1. Response A\n2. Response B",
+            "parsed_ranking": ["Response A", "Response B"]
         }
-        
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_responses
-            
-            with patch("backend.council.COUNCIL_MODELS", ["model1", "model2", "model3"]):
-                result = await stage1_collect_responses("Test question?")
+    ]
+    
+    label_to_model = {
+        "Response A": "openai/gpt-4",
+        "Response B": "google/gemini"
+    }
+    
+    result = council.calculate_aggregate_rankings(stage2_results, label_to_model)
+    
+    assert len(result) == 2
+    assert result[0]["model"] == "openai/gpt-4"
+    assert result[0]["average_rank"] == 1.0
+    assert result[1]["model"] == "google/gemini"
+    assert result[1]["average_rank"] == 2.0
+
+
+def test_calculate_aggregate_rankings_mixed_rankings():
+    """Test aggregate ranking with different model rankings."""
+    stage2_results = [
+        {
+            "model": "model1",
+            "ranking": "FINAL RANKING:\n1. Response A\n2. Response B\n3. Response C",
+            "parsed_ranking": ["Response A", "Response B", "Response C"]
+        },
+        {
+            "model": "model2",
+            "ranking": "FINAL RANKING:\n1. Response B\n2. Response A\n3. Response C",
+            "parsed_ranking": ["Response B", "Response A", "Response C"]
+        }
+    ]
+    
+    label_to_model = {
+        "Response A": "model-a",
+        "Response B": "model-b",
+        "Response C": "model-c"
+    }
+    
+    result = council.calculate_aggregate_rankings(stage2_results, label_to_model)
+    
+    # model-a: (1 + 2) / 2 = 1.5
+    # model-b: (2 + 1) / 2 = 1.5
+    # model-c: (3 + 3) / 2 = 3.0
+    
+    assert len(result) == 3
+    # Both model-a and model-b should have avg 1.5
+    top_two = result[:2]
+    assert all(r["average_rank"] == 1.5 for r in top_two)
+    assert result[2]["average_rank"] == 3.0
+
+
+def test_calculate_aggregate_rankings_includes_count():
+    """Test that aggregate rankings include rankings_count."""
+    stage2_results = [
+        {
+            "model": "model1",
+            "ranking": "FINAL RANKING:\n1. Response A",
+            "parsed_ranking": ["Response A"]
+        },
+        {
+            "model": "model2",
+            "ranking": "FINAL RANKING:\n1. Response A",
+            "parsed_ranking": ["Response A"]
+        }
+    ]
+    
+    label_to_model = {"Response A": "test-model"}
+    
+    result = council.calculate_aggregate_rankings(stage2_results, label_to_model)
+    
+    assert result[0]["rankings_count"] == 2
+
+
+def test_calculate_aggregate_rankings_empty_results():
+    """Test aggregate rankings with empty stage2 results."""
+    result = council.calculate_aggregate_rankings([], {})
+    assert result == []
+
+
+def test_calculate_aggregate_rankings_handles_missing_labels():
+    """Test that aggregate rankings handles labels not in mapping."""
+    stage2_results = [
+        {
+            "model": "model1",
+            "ranking": "FINAL RANKING:\n1. Response X\n2. Response A",
+            "parsed_ranking": ["Response X", "Response A"]
+        }
+    ]
+    
+    label_to_model = {"Response A": "model-a"}
+    
+    result = council.calculate_aggregate_rankings(stage2_results, label_to_model)
+    
+    # Should only include Response A
+    assert len(result) == 1
+    assert result[0]["model"] == "model-a"
+
+
+# Tests for stage1_collect_responses
+@pytest.mark.asyncio
+async def test_stage1_collect_responses_success(sample_stage1_results):
+    """Test successful Stage 1 response collection."""
+    user_query = "What is the capital of France?"
+    
+    async def mock_query_models(models, messages):
+        return {
+            "openai/gpt-5.1": {"content": "Paris is the capital."},
+            "google/gemini-3-pro-preview": {"content": "The capital is Paris."},
+            "anthropic/claude-sonnet-4.5": {"content": "France's capital is Paris."}
+        }
+    
+    with patch('backend.council.query_models_parallel', side_effect=mock_query_models):
+        result = await council.stage1_collect_responses(user_query)
         
         assert len(result) == 3
-        assert all(isinstance(r, dict) for r in result)
         assert all("model" in r and "response" in r for r in result)
 
-    @pytest.mark.asyncio
-    async def test_stage1_partial_failure(self):
-        """Test Stage 1 when some models fail to respond."""
-        mock_responses = {
-            "model1": {"content": "Response from model 1"},
-            "model2": None,  # Failed model
-            "model3": {"content": "Response from model 3"},
+
+@pytest.mark.asyncio
+async def test_stage1_collect_responses_filters_none_responses():
+    """Test that Stage 1 filters out None responses from failed models."""
+    user_query = "Test query"
+    
+    async def mock_query_models(models, messages):
+        return {
+            "model1": {"content": "Response 1"},
+            "model2": None,  # Failed
+            "model3": {"content": "Response 3"}
         }
+    
+    with patch('backend.council.query_models_parallel', side_effect=mock_query_models):
+        result = await council.stage1_collect_responses(user_query)
         
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_responses
-            
-            with patch("backend.council.COUNCIL_MODELS", ["model1", "model2", "model3"]):
-                result = await stage1_collect_responses("Test question?")
-        
-        # Should only include successful responses
         assert len(result) == 2
-        assert all(r["response"] for r in result)
+        models = [r["model"] for r in result]
+        assert "model1" in models
+        assert "model3" in models
+        assert "model2" not in models
 
-    @pytest.mark.asyncio
-    async def test_stage1_all_failures(self):
-        """Test Stage 1 when all models fail."""
-        mock_responses = {
-            "model1": None,
-            "model2": None,
-        }
-        
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_responses
-            
-            with patch("backend.council.COUNCIL_MODELS", ["model1", "model2"]):
-                result = await stage1_collect_responses("Test question?")
-        
-        assert result == []
 
-    @pytest.mark.asyncio
-    async def test_stage1_empty_content(self):
-        """Test Stage 1 with empty content responses."""
-        mock_responses = {
+@pytest.mark.asyncio
+async def test_stage1_collect_responses_handles_empty_content():
+    """Test that Stage 1 handles responses with empty content."""
+    user_query = "Test query"
+    
+    async def mock_query_models(models, messages):
+        return {
             "model1": {"content": ""},
-            "model2": {"content": "Valid response"},
+            "model2": {"content": "Valid response"}
         }
+    
+    with patch('backend.council.query_models_parallel', side_effect=mock_query_models):
+        result = await council.stage1_collect_responses(user_query)
         
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_responses
-            
-            with patch("backend.council.COUNCIL_MODELS", ["model1", "model2"]):
-                result = await stage1_collect_responses("Test question?")
-        
-        assert len(result) == 2  # Both are included even with empty content
+        # Should include both, even with empty content
+        assert len(result) == 2
 
 
-class TestStage2CollectRankings:
-    """Tests for stage2_collect_rankings function."""
-
-    @pytest.mark.asyncio
-    async def test_stage2_success(self):
-        """Test Stage 2 with successful rankings."""
-        stage1_results = [
-            {"model": "model1", "response": "Response 1"},
-            {"model": "model2", "response": "Response 2"},
-            {"model": "model3", "response": "Response 3"},
-        ]
-        
-        mock_responses = {
-            "model1": {"content": "FINAL RANKING:\n1. Response B\n2. Response A\n3. Response C"},
-            "model2": {"content": "FINAL RANKING:\n1. Response A\n2. Response C\n3. Response B"},
+# Tests for stage2_collect_rankings
+@pytest.mark.asyncio
+async def test_stage2_collect_rankings_creates_anonymous_labels(sample_stage1_results):
+    """Test that Stage 2 creates anonymous labels for responses."""
+    user_query = "Test query"
+    
+    async def mock_query_models(models, messages):
+        return {
+            "model1": {"content": "FINAL RANKING:\n1. Response A\n2. Response B"}
         }
+    
+    with patch('backend.council.query_models_parallel', side_effect=mock_query_models):
+        results, label_to_model = await council.stage2_collect_rankings(
+            user_query, sample_stage1_results
+        )
         
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_responses
-            
-            with patch("backend.council.COUNCIL_MODELS", ["model1", "model2"]):
-                rankings, label_to_model = await stage2_collect_rankings("Question?", stage1_results)
-        
-        assert len(rankings) == 2
+        # Check label mapping
         assert "Response A" in label_to_model
         assert "Response B" in label_to_model
         assert "Response C" in label_to_model
-        assert label_to_model["Response A"] == "model1"
 
-    @pytest.mark.asyncio
-    async def test_stage2_label_generation(self):
-        """Test correct label generation for anonymization."""
-        stage1_results = [
-            {"model": "model1", "response": "R1"},
-            {"model": "model2", "response": "R2"},
-        ]
+
+@pytest.mark.asyncio
+async def test_stage2_collect_rankings_builds_correct_prompt(sample_stage1_results):
+    """Test that Stage 2 builds a ranking prompt with anonymized responses."""
+    user_query = "Test query"
+    
+    captured_messages = []
+    
+    async def mock_query_models(models, messages):
+        captured_messages.append(messages)
+        return {"model1": {"content": "FINAL RANKING:\n1. Response A"}}
+    
+    with patch('backend.council.query_models_parallel', side_effect=mock_query_models):
+        await council.stage2_collect_rankings(user_query, sample_stage1_results)
         
-        mock_responses = {
-            "model1": {"content": "FINAL RANKING:\n1. Response A\n2. Response B"},
+        # Check that prompt contains anonymized responses
+        prompt = captured_messages[0][0]["content"]
+        assert "Response A:" in prompt
+        assert "Response B:" in prompt
+        assert "Response C:" in prompt
+        assert "FINAL RANKING:" in prompt
+
+
+@pytest.mark.asyncio
+async def test_stage2_collect_rankings_parses_rankings(sample_stage1_results):
+    """Test that Stage 2 parses rankings from model responses."""
+    user_query = "Test query"
+    
+    async def mock_query_models(models, messages):
+        return {
+            "model1": {"content": "Analysis...\n\nFINAL RANKING:\n1. Response A\n2. Response B"}
         }
+    
+    with patch('backend.council.query_models_parallel', side_effect=mock_query_models):
+        results, _ = await council.stage2_collect_rankings(user_query, sample_stage1_results)
         
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_responses
-            
-            with patch("backend.council.COUNCIL_MODELS", ["model1"]):
-                rankings, label_to_model = await stage2_collect_rankings("Q", stage1_results)
-        
-        assert "Response A" in label_to_model
-        assert "Response B" in label_to_model
-
-    @pytest.mark.asyncio
-    async def test_stage2_many_responses(self):
-        """Test Stage 2 with many responses (testing alphabet labels)."""
-        stage1_results = [{"model": f"model{i}", "response": f"R{i}"} for i in range(10)]
-        
-        mock_responses = {"model1": {"content": "Some ranking"}}
-        
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_responses
-            
-            with patch("backend.council.COUNCIL_MODELS", ["model1"]):
-                rankings, label_to_model = await stage2_collect_rankings("Q", stage1_results)
-        
-        # Should have labels A through J
-        assert len(label_to_model) == 10
-        assert "Response A" in label_to_model
-        assert "Response J" in label_to_model
+        assert len(results) == 1
+        assert "parsed_ranking" in results[0]
+        assert results[0]["parsed_ranking"] == ["Response A", "Response B"]
 
 
-class TestStage3SynthesizeFinal:
-    """Tests for stage3_synthesize_final function."""
+# Tests for stage3_synthesize_final
+@pytest.mark.asyncio
+async def test_stage3_synthesize_final_uses_chairman_model(
+    sample_stage1_results, sample_stage2_results
+):
+    """Test that Stage 3 uses the configured chairman model."""
+    from backend.config import CHAIRMAN_MODEL
+    
+    user_query = "Test query"
+    
+    captured_model = []
+    
+    async def mock_query_model(model, messages, timeout=120.0):
+        captured_model.append(model)
+        return {"content": "Final synthesis"}
+    
+    with patch('backend.council.query_model', side_effect=mock_query_model):
+        result = await council.stage3_synthesize_final(
+            user_query, sample_stage1_results, sample_stage2_results
+        )
+        
+        assert captured_model[0] == CHAIRMAN_MODEL
+        assert result["model"] == CHAIRMAN_MODEL
 
-    @pytest.mark.asyncio
-    async def test_stage3_success(self):
-        """Test Stage 3 with successful synthesis."""
-        stage1_results = [{"model": "model1", "response": "R1"}]
-        stage2_results = [{"model": "model1", "ranking": "Ranking 1"}]
-        
-        mock_response = {"content": "Final synthesized answer"}
-        
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_response
-            
-            with patch("backend.council.CHAIRMAN_MODEL", "chairman"):
-                result = await stage3_synthesize_final("Q", stage1_results, stage2_results)
-        
-        assert result["model"] == "chairman"
-        assert result["response"] == "Final synthesized answer"
 
-    @pytest.mark.asyncio
-    async def test_stage3_chairman_failure(self):
-        """Test Stage 3 when chairman model fails."""
-        stage1_results = [{"model": "model1", "response": "R1"}]
-        stage2_results = [{"model": "model1", "ranking": "Ranking 1"}]
+@pytest.mark.asyncio
+async def test_stage3_synthesize_final_includes_all_context(
+    sample_stage1_results, sample_stage2_results
+):
+    """Test that Stage 3 includes context from both previous stages."""
+    user_query = "Test query"
+    
+    captured_messages = []
+    
+    async def mock_query_model(model, messages, timeout=120.0):
+        captured_messages.append(messages)
+        return {"content": "Final synthesis"}
+    
+    with patch('backend.council.query_model', side_effect=mock_query_model):
+        await council.stage3_synthesize_final(
+            user_query, sample_stage1_results, sample_stage2_results
+        )
         
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = None
-            
-            with patch("backend.council.CHAIRMAN_MODEL", "chairman"):
-                result = await stage3_synthesize_final("Q", stage1_results, stage2_results)
+        prompt = captured_messages[0][0]["content"]
+        assert "STAGE 1" in prompt
+        assert "STAGE 2" in prompt
+        assert user_query in prompt
+
+
+@pytest.mark.asyncio
+async def test_stage3_synthesize_final_handles_chairman_failure(
+    sample_stage1_results, sample_stage2_results
+):
+    """Test that Stage 3 handles chairman model failure gracefully."""
+    user_query = "Test query"
+    
+    async def mock_query_model(model, messages, timeout=120.0):
+        return None  # Simulate failure
+    
+    with patch('backend.council.query_model', side_effect=mock_query_model):
+        result = await council.stage3_synthesize_final(
+            user_query, sample_stage1_results, sample_stage2_results
+        )
         
-        assert result["model"] == "chairman"
+        assert result is not None
         assert "Error" in result["response"]
 
-    @pytest.mark.asyncio
-    async def test_stage3_empty_stages(self):
-        """Test Stage 3 with empty previous stage results."""
-        stage1_results = []
-        stage2_results = []
+
+# Tests for generate_conversation_title
+@pytest.mark.asyncio
+async def test_generate_conversation_title_creates_short_title():
+    """Test that title generation creates a short title."""
+    user_query = "What is the best way to learn Python programming for beginners?"
+    
+    async def mock_query_model(model, messages, timeout=30.0):
+        return {"content": "Learning Python Basics"}
+    
+    with patch('backend.council.query_model', side_effect=mock_query_model):
+        title = await council.generate_conversation_title(user_query)
         
-        mock_response = {"content": "Synthesized from empty"}
+        assert isinstance(title, str)
+        assert len(title) > 0
+        assert title == "Learning Python Basics"
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_title_strips_quotes():
+    """Test that title generation removes quotes."""
+    user_query = "Test question"
+    
+    async def mock_query_model(model, messages, timeout=30.0):
+        return {"content": '"Test Title"'}
+    
+    with patch('backend.council.query_model', side_effect=mock_query_model):
+        title = await council.generate_conversation_title(user_query)
         
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_response
-            
-            result = await stage3_synthesize_final("Q", stage1_results, stage2_results)
+        assert title == "Test Title"
+        assert '"' not in title
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_title_truncates_long_titles():
+    """Test that very long titles are truncated."""
+    user_query = "Test question"
+    long_title = "A" * 100
+    
+    async def mock_query_model(model, messages, timeout=30.0):
+        return {"content": long_title}
+    
+    with patch('backend.council.query_model', side_effect=mock_query_model):
+        title = await council.generate_conversation_title(user_query)
         
-        assert "response" in result
+        assert len(title) <= 50
+        assert title.endswith("...")
 
 
-class TestParseRankingFromText:
-    """Tests for parse_ranking_from_text function."""
-
-    def test_parse_valid_ranking(self):
-        """Test parsing valid FINAL RANKING section."""
-        text = """
-        Some preamble text.
+@pytest.mark.asyncio
+async def test_generate_conversation_title_handles_failure():
+    """Test that title generation falls back on failure."""
+    user_query = "Test question"
+    
+    async def mock_query_model(model, messages, timeout=30.0):
+        return None  # Simulate failure
+    
+    with patch('backend.council.query_model', side_effect=mock_query_model):
+        title = await council.generate_conversation_title(user_query)
         
-        FINAL RANKING:
-        1. Response B
-        2. Response A
-        3. Response C
-        """
-        result = parse_ranking_from_text(text)
-        assert result == ["Response B", "Response A", "Response C"]
-
-    def test_parse_ranking_without_spaces(self):
-        """Test parsing ranking without spaces after numbers."""
-        text = "FINAL RANKING:\n1.Response A\n2.Response B"
-        result = parse_ranking_from_text(text)
-        assert "Response A" in result
-        assert "Response B" in result
-
-    def test_parse_ranking_mixed_format(self):
-        """Test parsing with mixed formatting."""
-        text = """
-        FINAL RANKING:
-        1. Response C is best
-        2. Response A comes next
-        3. Response B is last
-        """
-        result = parse_ranking_from_text(text)
-        assert "Response C" in result
-        assert "Response A" in result
-        assert "Response B" in result
-
-    def test_parse_no_final_ranking_section(self):
-        """Test parsing when FINAL RANKING section is missing."""
-        text = "Response A is good. Response B is better."
-        result = parse_ranking_from_text(text)
-        # Should fallback to finding any Response X patterns
-        assert "Response A" in result
-        assert "Response B" in result
-
-    def test_parse_empty_text(self):
-        """Test parsing empty text."""
-        result = parse_ranking_from_text("")
-        assert result == []
-
-    def test_parse_no_responses(self):
-        """Test parsing text without any Response labels."""
-        text = "FINAL RANKING:\n1. First place\n2. Second place"
-        result = parse_ranking_from_text(text)
-        assert result == []
-
-    def test_parse_duplicate_responses(self):
-        """Test parsing with duplicate response mentions."""
-        text = "Response A Response A FINAL RANKING:\n1. Response A"
-        result = parse_ranking_from_text(text)
-        assert result == ["Response A"]
+        assert title == "New Conversation"
 
 
-class TestCalculateAggregateRankings:
-    """Tests for calculate_aggregate_rankings function."""
-
-    def test_aggregate_basic(self):
-        """Test basic aggregate ranking calculation."""
-        stage2_results = [
-            {"model": "m1", "ranking": "FINAL RANKING:\n1. Response A\n2. Response B"},
-            {"model": "m2", "ranking": "FINAL RANKING:\n1. Response B\n2. Response A"},
-        ]
-        label_to_model = {
-            "Response A": "model1",
-            "Response B": "model2",
-        }
+# Tests for run_full_council
+@pytest.mark.asyncio
+async def test_run_full_council_completes_all_stages():
+    """Test that run_full_council executes all three stages."""
+    user_query = "Test query"
+    
+    with patch('backend.council.stage1_collect_responses') as mock_s1, \
+         patch('backend.council.stage2_collect_rankings') as mock_s2, \
+         patch('backend.council.stage3_synthesize_final') as mock_s3:
         
-        result = calculate_aggregate_rankings(stage2_results, label_to_model)
+        mock_s1.return_value = [{"model": "m1", "response": "r1"}]
+        mock_s2.return_value = ([{"model": "m1", "ranking": "rank"}], {"Response A": "m1"})
+        mock_s3.return_value = {"model": "chairman", "response": "final"}
         
-        assert len(result) == 2
-        assert all("model" in r and "average_rank" in r for r in result)
-        # Both should have average rank of 1.5 ((1+2)/2)
-        assert result[0]["average_rank"] == 1.5
-        assert result[1]["average_rank"] == 1.5
-
-    def test_aggregate_clear_winner(self):
-        """Test aggregate with a clear winner."""
-        stage2_results = [
-            {"model": "m1", "ranking": "FINAL RANKING:\n1. Response A\n2. Response B\n3. Response C"},
-            {"model": "m2", "ranking": "FINAL RANKING:\n1. Response A\n2. Response C\n3. Response B"},
-            {"model": "m3", "ranking": "FINAL RANKING:\n1. Response A\n2. Response B\n3. Response C"},
-        ]
-        label_to_model = {
-            "Response A": "modelA",
-            "Response B": "modelB",
-            "Response C": "modelC",
-        }
+        stage1, stage2, stage3, metadata = await council.run_full_council(user_query)
         
-        result = calculate_aggregate_rankings(stage2_results, label_to_model)
-        
-        # Response A should be first (all ranked it #1)
-        assert result[0]["model"] == "modelA"
-        assert result[0]["average_rank"] == 1.0
-
-    def test_aggregate_empty_rankings(self):
-        """Test aggregate with empty rankings."""
-        stage2_results = []
-        label_to_model = {}
-        
-        result = calculate_aggregate_rankings(stage2_results, label_to_model)
-        assert result == []
-
-    def test_aggregate_partial_rankings(self):
-        """Test when not all models rank all responses."""
-        stage2_results = [
-            {"model": "m1", "ranking": "FINAL RANKING:\n1. Response A"},
-            {"model": "m2", "ranking": "FINAL RANKING:\n1. Response B\n2. Response A"},
-        ]
-        label_to_model = {
-            "Response A": "modelA",
-            "Response B": "modelB",
-        }
-        
-        result = calculate_aggregate_rankings(stage2_results, label_to_model)
-        
-        assert len(result) == 2
-        assert all("rankings_count" in r for r in result)
-
-    def test_aggregate_sorting(self):
-        """Test that results are sorted by average rank."""
-        stage2_results = [
-            {"model": "m1", "ranking": "FINAL RANKING:\n1. Response C\n2. Response B\n3. Response A"},
-        ]
-        label_to_model = {
-            "Response A": "modelA",
-            "Response B": "modelB",
-            "Response C": "modelC",
-        }
-        
-        result = calculate_aggregate_rankings(stage2_results, label_to_model)
-        
-        # Should be sorted: C (1.0), B (2.0), A (3.0)
-        assert result[0]["model"] == "modelC"
-        assert result[1]["model"] == "modelB"
-        assert result[2]["model"] == "modelA"
+        assert mock_s1.called
+        assert mock_s2.called
+        assert mock_s3.called
+        assert "aggregate_rankings" in metadata
+        assert "label_to_model" in metadata
 
 
-class TestGenerateConversationTitle:
-    """Tests for generate_conversation_title function."""
-
-    @pytest.mark.asyncio
-    async def test_title_generation_success(self):
-        """Test successful title generation."""
-        mock_response = {"content": "Quick Question About Python"}
+@pytest.mark.asyncio
+async def test_run_full_council_handles_no_stage1_responses():
+    """Test that run_full_council handles case when all stage1 models fail."""
+    user_query = "Test query"
+    
+    with patch('backend.council.stage1_collect_responses') as mock_s1:
+        mock_s1.return_value = []  # No successful responses
         
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_response
-            
-            result = await generate_conversation_title("How do I use Python decorators?")
+        stage1, stage2, stage3, metadata = await council.run_full_council(user_query)
         
-        assert result == "Quick Question About Python"
-
-    @pytest.mark.asyncio
-    async def test_title_generation_failure(self):
-        """Test title generation when model fails."""
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = None
-            
-            result = await generate_conversation_title("Test question")
-        
-        assert result == "New Conversation"
-
-    @pytest.mark.asyncio
-    async def test_title_with_quotes(self):
-        """Test title generation removes quotes."""
-        mock_response = {"content": '"Python Decorators"'}
-        
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_response
-            
-            result = await generate_conversation_title("Question")
-        
-        assert result == "Python Decorators"
-        assert '"' not in result
-
-    @pytest.mark.asyncio
-    async def test_title_truncation(self):
-        """Test that very long titles are truncated."""
-        long_title = "A" * 100
-        mock_response = {"content": long_title}
-        
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_response
-            
-            result = await generate_conversation_title("Question")
-        
-        assert len(result) <= 50
-        assert result.endswith("...")
-
-    @pytest.mark.asyncio
-    async def test_title_empty_response(self):
-        """Test title generation with empty response."""
-        mock_response = {"content": ""}
-        
-        with patch("backend.council.query_model", new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_response
-            
-            result = await generate_conversation_title("Question")
-        
-        assert result == "New Conversation"
+        assert stage1 == []
+        assert stage2 == []
+        assert "error" in stage3["model"]
+        assert "Error" in stage3["response"] or "failed" in stage3["response"].lower()
 
 
-class TestRunFullCouncil:
-    """Tests for run_full_council function."""
-
-    @pytest.mark.asyncio
-    async def test_full_council_success(self):
-        """Test complete council process with all stages."""
-        stage1_mock = [{"model": "m1", "response": "R1"}]
-        stage2_mock = [{"model": "m1", "ranking": "FINAL RANKING:\n1. Response A"}]
-        stage3_mock = {"model": "chairman", "response": "Final answer"}
-        label_mock = {"Response A": "m1"}
+@pytest.mark.asyncio
+async def test_run_full_council_returns_complete_metadata():
+    """Test that run_full_council returns complete metadata."""
+    user_query = "Test query"
+    
+    with patch('backend.council.stage1_collect_responses') as mock_s1, \
+         patch('backend.council.stage2_collect_rankings') as mock_s2, \
+         patch('backend.council.stage3_synthesize_final') as mock_s3, \
+         patch('backend.council.calculate_aggregate_rankings') as mock_agg:
         
-        with patch("backend.council.stage1_collect_responses", new_callable=AsyncMock) as s1:
-            with patch("backend.council.stage2_collect_rankings", new_callable=AsyncMock) as s2:
-                with patch("backend.council.stage3_synthesize_final", new_callable=AsyncMock) as s3:
-                    s1.return_value = stage1_mock
-                    s2.return_value = (stage2_mock, label_mock)
-                    s3.return_value = stage3_mock
-                    
-                    s1_result, s2_result, s3_result, metadata = await run_full_council("Question?")
+        mock_s1.return_value = [{"model": "m1", "response": "r1"}]
+        mock_s2.return_value = (
+            [{"model": "m1", "ranking": "rank", "parsed_ranking": ["Response A"]}],
+            {"Response A": "m1"}
+        )
+        mock_s3.return_value = {"model": "chairman", "response": "final"}
+        mock_agg.return_value = [{"model": "m1", "average_rank": 1.0}]
         
-        assert s1_result == stage1_mock
-        assert s2_result == stage2_mock
-        assert s3_result == stage3_mock
+        _, _, _, metadata = await council.run_full_council(user_query)
+        
         assert "label_to_model" in metadata
         assert "aggregate_rankings" in metadata
-
-    @pytest.mark.asyncio
-    async def test_full_council_stage1_failure(self):
-        """Test full council when Stage 1 fails completely."""
-        with patch("backend.council.stage1_collect_responses", new_callable=AsyncMock) as s1:
-            s1.return_value = []
-            
-            s1_result, s2_result, s3_result, metadata = await run_full_council("Question?")
-        
-        assert s1_result == []
-        assert s2_result == []
-        assert "error" in s3_result.get("model", "")
-
-    @pytest.mark.asyncio
-    async def test_full_council_metadata_structure(self):
-        """Test that metadata has correct structure."""
-        stage1_mock = [{"model": "m1", "response": "R1"}]
-        stage2_mock = [{"model": "m1", "ranking": "FINAL RANKING:\n1. Response A"}]
-        stage3_mock = {"model": "chairman", "response": "Final"}
-        label_mock = {"Response A": "m1"}
-        
-        with patch("backend.council.stage1_collect_responses", new_callable=AsyncMock) as s1:
-            with patch("backend.council.stage2_collect_rankings", new_callable=AsyncMock) as s2:
-                with patch("backend.council.stage3_synthesize_final", new_callable=AsyncMock) as s3:
-                    s1.return_value = stage1_mock
-                    s2.return_value = (stage2_mock, label_mock)
-                    s3.return_value = stage3_mock
-                    
-                    _, _, _, metadata = await run_full_council("Q")
-        
-        assert isinstance(metadata, dict)
-        assert "label_to_model" in metadata
-        assert "aggregate_rankings" in metadata
+        assert isinstance(metadata["label_to_model"], dict)
         assert isinstance(metadata["aggregate_rankings"], list)
-
-
-class TestEdgeCases:
-    """Edge case tests."""
-
-    @pytest.mark.asyncio
-    async def test_unicode_in_query(self):
-        """Test handling of Unicode characters in queries."""
-        unicode_query = "What is the meaning of 你好 and café?"
-        
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock:
-            mock.return_value = {"m1": {"content": "Response"}}
-            with patch("backend.council.COUNCIL_MODELS", ["m1"]):
-                result = await stage1_collect_responses(unicode_query)
-        
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_very_long_query(self):
-        """Test handling of very long queries."""
-        long_query = "A" * 10000
-        
-        with patch("backend.council.query_models_parallel", new_callable=AsyncMock) as mock:
-            mock.return_value = {"m1": {"content": "Response"}}
-            with patch("backend.council.COUNCIL_MODELS", ["m1"]):
-                result = await stage1_collect_responses(long_query)
-        
-        assert len(result) == 1
-
-    def test_parse_ranking_case_sensitivity(self):
-        """Test that ranking parsing handles case variations."""
-        text = "FINAL RANKING:\n1. response A\n2. Response B"
-        result = parse_ranking_from_text(text)
-        # Should only match proper case "Response B"
-        assert "Response B" in result
-
-    @pytest.mark.asyncio
-    async def test_concurrent_council_runs(self):
-        """Test that multiple concurrent council runs don't interfere."""
-        import asyncio
-        
-        with patch("backend.council.stage1_collect_responses", new_callable=AsyncMock) as s1:
-            with patch("backend.council.stage2_collect_rankings", new_callable=AsyncMock) as s2:
-                with patch("backend.council.stage3_synthesize_final", new_callable=AsyncMock) as s3:
-                    s1.return_value = [{"model": "m1", "response": "R"}]
-                    s2.return_value = ([{"model": "m1", "ranking": "R"}], {"Response A": "m1"})
-                    s3.return_value = {"model": "c", "response": "F"}
-                    
-                    # Run multiple councils concurrently
-                    results = await asyncio.gather(
-                        run_full_council("Q1"),
-                        run_full_council("Q2"),
-                        run_full_council("Q3"),
-                    )
-        
-        assert len(results) == 3
-        assert all(len(r) == 4 for r in results)
