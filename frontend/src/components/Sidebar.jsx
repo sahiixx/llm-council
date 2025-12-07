@@ -1,5 +1,14 @@
 import './Sidebar.css';
 
+/**
+ * Renders the sidebar UI for managing and selecting conversations.
+ *
+ * @param {Object[]} conversations - Array of conversation objects to display; each object should include at least `id`, `title`, and `message_count`.
+ * @param {(string|number|null)} currentConversationId - ID of the currently active conversation, used to highlight the active item.
+ * @param {(id: string|number) => void} onSelectConversation - Callback invoked with a conversation ID when a conversation item is clicked.
+ * @param {() => void} onNewConversation - Callback invoked when the "+ New Conversation" button is clicked.
+ * @returns {JSX.Element} The rendered sidebar element containing the header, new-conversation button, and conversation list (or empty state).
+ */
 export default function Sidebar({
   conversations,
   currentConversationId,

@@ -4,6 +4,15 @@ import ChatInterface from './components/ChatInterface';
 import { api } from './api';
 import './App.css';
 
+/**
+ * Root application component that manages conversations, selection, and streaming message interactions.
+ *
+ * Manages conversation list and current conversation state, loads conversations on mount and when a
+ * conversation is selected, creates new conversations, and sends messages using a streaming API
+ * that progressively updates assistant responses in the UI.
+ *
+ * @returns {JSX.Element} The root React element for the messaging application.
+ */
 function App() {
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
