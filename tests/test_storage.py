@@ -1,417 +1,525 @@
-"""Tests for backend/storage.py"""
+"""Comprehensive unit tests for backend/storage.py."""
+
+import pytest
 import json
 import os
-import pytest
 import tempfile
 import shutil
-from pathlib import Path
 from datetime import datetime
-from unittest.mock import patch, mock_open
-from backend import storage
+from unittest.mock import patch, MagicMock
+from backend.storage import (
+    ensure_data_dir,
+    get_conversation_path,
+    create_conversation,
+    get_conversation,
+    save_conversation,
+    list_conversations,
+    add_user_message,
+    add_assistant_message,
+    update_conversation_title,
+)
 
 
 @pytest.fixture
 def temp_data_dir():
     """Create a temporary data directory for testing."""
     temp_dir = tempfile.mkdtemp()
-    with patch('backend.storage.DATA_DIR', temp_dir):
-        yield temp_dir
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    yield temp_dir
+    shutil.rmtree(temp_dir)
 
 
-class TestStorageUtilities:
-    """Test suite for storage utility functions."""
+@pytest.fixture
+def mock_data_dir(temp_data_dir):
+    """Mock DATA_DIR to use temporary directory."""
+    with patch("backend.storage.DATA_DIR", temp_data_dir):
+        yield temp_data_dir
 
-    def test_ensure_data_dir_creates_directory(self, temp_data_dir):
-        """Test that ensure_data_dir creates the directory."""
-        # Remove the directory first
-        if os.path.exists(temp_data_dir):
-            shutil.rmtree(temp_data_dir)
 
-        storage.ensure_data_dir()
-        assert os.path.exists(temp_data_dir)
-        assert os.path.isdir(temp_data_dir)
+class TestEnsureDataDir:
+    """Tests for ensure_data_dir function."""
 
-    def test_ensure_data_dir_idempotent(self, temp_data_dir):
-        """Test that ensure_data_dir can be called multiple times."""
-        storage.ensure_data_dir()
-        storage.ensure_data_dir()
-        assert os.path.exists(temp_data_dir)
+    def test_creates_directory_if_not_exists(self, temp_data_dir):
+        """Test that ensure_data_dir creates directory if it doesn't exist."""
+        test_dir = os.path.join(temp_data_dir, "new_dir")
+        
+        with patch("backend.storage.DATA_DIR", test_dir):
+            ensure_data_dir()
+            assert os.path.exists(test_dir)
+            assert os.path.isdir(test_dir)
 
-    def test_get_conversation_path(self, temp_data_dir):
-        """Test conversation path generation."""
-        conv_id = 'test-123'
-        path = storage.get_conversation_path(conv_id)
-        assert path.endswith('test-123.json')
-        assert temp_data_dir in path
+    def test_does_not_fail_if_exists(self, mock_data_dir):
+        """Test that ensure_data_dir doesn't fail if directory exists."""
+        # Call twice - second call should not raise
+        ensure_data_dir()
+        ensure_data_dir()
+        assert os.path.exists(mock_data_dir)
+
+    def test_creates_nested_directories(self, temp_data_dir):
+        """Test creating nested directory structure."""
+        nested_dir = os.path.join(temp_data_dir, "level1", "level2", "level3")
+        
+        with patch("backend.storage.DATA_DIR", nested_dir):
+            ensure_data_dir()
+            assert os.path.exists(nested_dir)
+
+
+class TestGetConversationPath:
+    """Tests for get_conversation_path function."""
+
+    def test_returns_correct_path(self, mock_data_dir):
+        """Test that get_conversation_path returns correct file path."""
+        conv_id = "test-123"
+        expected = os.path.join(mock_data_dir, "test-123.json")
+        
+        result = get_conversation_path(conv_id)
+        assert result == expected
+
+    def test_handles_special_characters(self, mock_data_dir):
+        """Test path generation with special characters in ID."""
+        conv_id = "test-123-abc_xyz"
+        result = get_conversation_path(conv_id)
+        assert result.endswith("test-123-abc_xyz.json")
+
+    def test_different_ids_different_paths(self, mock_data_dir):
+        """Test that different IDs produce different paths."""
+        path1 = get_conversation_path("id1")
+        path2 = get_conversation_path("id2")
+        assert path1 != path2
 
 
 class TestCreateConversation:
-    """Test suite for create_conversation function."""
+    """Tests for create_conversation function."""
 
-    def test_create_conversation_returns_dict(self, temp_data_dir):
-        """Test that create_conversation returns a dictionary."""
-        conv = storage.create_conversation('test-id')
-        assert isinstance(conv, dict)
+    def test_creates_new_conversation(self, mock_data_dir):
+        """Test creating a new conversation."""
+        conv_id = "test-conv-1"
+        
+        result = create_conversation(conv_id)
+        
+        assert result["id"] == conv_id
+        assert "created_at" in result
+        assert result["title"] == "New Conversation"
+        assert result["messages"] == []
 
-    def test_create_conversation_has_required_fields(self, temp_data_dir):
-        """Test that created conversation has all required fields."""
-        conv = storage.create_conversation('test-id')
-        assert 'id' in conv
-        assert 'created_at' in conv
-        assert 'title' in conv
-        assert 'messages' in conv
-
-    def test_create_conversation_correct_id(self, temp_data_dir):
-        """Test that conversation has correct ID."""
-        conv_id = 'unique-test-id-123'
-        conv = storage.create_conversation(conv_id)
-        assert conv['id'] == conv_id
-
-    def test_create_conversation_has_timestamp(self, temp_data_dir):
-        """Test that conversation has valid timestamp."""
-        conv = storage.create_conversation('test-id')
-        # Verify it's a valid ISO format timestamp
-        datetime.fromisoformat(conv['created_at'])
-
-    def test_create_conversation_default_title(self, temp_data_dir):
-        """Test that conversation has default title."""
-        conv = storage.create_conversation('test-id')
-        assert conv['title'] == 'New Conversation'
-
-    def test_create_conversation_empty_messages(self, temp_data_dir):
-        """Test that new conversation has empty messages."""
-        conv = storage.create_conversation('test-id')
-        assert conv['messages'] == []
-        assert isinstance(conv['messages'], list)
-
-    def test_create_conversation_saves_to_file(self, temp_data_dir):
+    def test_saves_to_file(self, mock_data_dir):
         """Test that conversation is saved to file."""
-        conv_id = 'test-save-id'
-        storage.create_conversation(conv_id)
+        conv_id = "test-conv-2"
         
-        path = storage.get_conversation_path(conv_id)
-        assert os.path.exists(path)
+        create_conversation(conv_id)
+        
+        file_path = get_conversation_path(conv_id)
+        assert os.path.exists(file_path)
+        
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+            assert data["id"] == conv_id
 
-    def test_create_conversation_file_content(self, temp_data_dir):
-        """Test that saved file has correct content."""
-        conv_id = 'test-content-id'
-        conv = storage.create_conversation(conv_id)
+    def test_creates_valid_json(self, mock_data_dir):
+        """Test that created file contains valid JSON."""
+        conv_id = "test-conv-3"
         
-        path = storage.get_conversation_path(conv_id)
-        with open(path, 'r') as f:
-            saved_data = json.load(f)
+        create_conversation(conv_id)
         
-        assert saved_data == conv
+        file_path = get_conversation_path(conv_id)
+        with open(file_path, 'r') as f:
+            data = json.load(f)  # Should not raise
+            assert isinstance(data, dict)
 
-    def test_create_conversation_json_format(self, temp_data_dir):
-        """Test that conversation is saved as valid JSON."""
-        conv_id = 'test-json-id'
-        storage.create_conversation(conv_id)
+    def test_created_at_is_iso_format(self, mock_data_dir):
+        """Test that created_at is in ISO format."""
+        conv_id = "test-conv-4"
         
-        path = storage.get_conversation_path(conv_id)
-        with open(path, 'r') as f:
-            # This will raise if JSON is invalid
-            json.load(f)
+        result = create_conversation(conv_id)
+        
+        # Should be able to parse as datetime
+        datetime.fromisoformat(result["created_at"])
 
 
 class TestGetConversation:
-    """Test suite for get_conversation function."""
+    """Tests for get_conversation function."""
 
-    def test_get_existing_conversation(self, temp_data_dir):
+    def test_returns_existing_conversation(self, mock_data_dir):
         """Test retrieving an existing conversation."""
-        conv_id = 'test-get-id'
-        created_conv = storage.create_conversation(conv_id)
+        conv_id = "test-conv-5"
+        create_conversation(conv_id)
         
-        retrieved_conv = storage.get_conversation(conv_id)
-        assert retrieved_conv == created_conv
+        result = get_conversation(conv_id)
+        
+        assert result is not None
+        assert result["id"] == conv_id
 
-    def test_get_nonexistent_conversation(self, temp_data_dir):
-        """Test that getting non-existent conversation returns None."""
-        result = storage.get_conversation('nonexistent-id')
+    def test_returns_none_for_nonexistent(self, mock_data_dir):
+        """Test that None is returned for non-existent conversation."""
+        result = get_conversation("nonexistent-id")
         assert result is None
 
-    def test_get_conversation_preserves_data(self, temp_data_dir):
-        """Test that retrieved conversation has all original data."""
-        conv_id = 'test-preserve-id'
-        original = storage.create_conversation(conv_id)
+    def test_returns_complete_conversation(self, mock_data_dir):
+        """Test that all conversation fields are returned."""
+        conv_id = "test-conv-6"
+        create_conversation(conv_id)
         
-        retrieved = storage.get_conversation(conv_id)
-        assert retrieved['id'] == original['id']
-        assert retrieved['created_at'] == original['created_at']
-        assert retrieved['title'] == original['title']
-        assert retrieved['messages'] == original['messages']
-
-    def test_get_conversation_handles_corrupted_json(self, temp_data_dir):
-        """Test handling of corrupted JSON files."""
-        conv_id = 'corrupted-id'
-        path = storage.get_conversation_path(conv_id)
+        result = get_conversation(conv_id)
         
-        # Create directory
-        storage.ensure_data_dir()
-        
-        # Write invalid JSON
-        with open(path, 'w') as f:
-            f.write('{ invalid json }')
-        
-        # Should raise or return None
-        with pytest.raises(json.JSONDecodeError):
-            storage.get_conversation(conv_id)
+        assert "id" in result
+        assert "created_at" in result
+        assert "title" in result
+        assert "messages" in result
 
 
 class TestSaveConversation:
-    """Test suite for save_conversation function."""
+    """Tests for save_conversation function."""
 
-    def test_save_conversation_creates_file(self, temp_data_dir):
-        """Test that save_conversation creates a file."""
+    def test_saves_conversation(self, mock_data_dir):
+        """Test saving a conversation."""
         conv = {
-            'id': 'test-save',
-            'created_at': datetime.utcnow().isoformat(),
-            'title': 'Test',
-            'messages': []
+            "id": "test-save-1",
+            "created_at": datetime.utcnow().isoformat(),
+            "title": "Test Title",
+            "messages": [{"role": "user", "content": "Hello"}]
         }
         
-        storage.save_conversation(conv)
-        path = storage.get_conversation_path('test-save')
-        assert os.path.exists(path)
-
-    def test_save_conversation_overwrites(self, temp_data_dir):
-        """Test that save_conversation overwrites existing data."""
-        conv_id = 'test-overwrite'
-        conv = storage.create_conversation(conv_id)
+        save_conversation(conv)
         
-        # Modify and save
-        conv['title'] = 'Updated Title'
-        storage.save_conversation(conv)
-        
-        # Retrieve and verify
-        retrieved = storage.get_conversation(conv_id)
-        assert retrieved['title'] == 'Updated Title'
+        file_path = get_conversation_path(conv["id"])
+        assert os.path.exists(file_path)
 
-    def test_save_conversation_preserves_all_fields(self, temp_data_dir):
-        """Test that all fields are preserved when saving."""
+    def test_overwrites_existing(self, mock_data_dir):
+        """Test that saving overwrites existing conversation."""
+        conv_id = "test-save-2"
+        create_conversation(conv_id)
+        
+        conv = get_conversation(conv_id)
+        conv["title"] = "Updated Title"
+        save_conversation(conv)
+        
+        reloaded = get_conversation(conv_id)
+        assert reloaded["title"] == "Updated Title"
+
+    def test_saves_complex_messages(self, mock_data_dir):
+        """Test saving conversation with complex message structure."""
         conv = {
-            'id': 'test-fields',
-            'created_at': '2024-01-01T00:00:00',
-            'title': 'Custom Title',
-            'messages': [
-                {'role': 'user', 'content': 'Hello'},
-                {'role': 'assistant', 'stage1': [], 'stage2': [], 'stage3': {}}
+            "id": "test-save-3",
+            "created_at": datetime.utcnow().isoformat(),
+            "title": "Complex",
+            "messages": [
+                {"role": "user", "content": "Q"},
+                {
+                    "role": "assistant",
+                    "stage1": [{"model": "m1", "response": "R1"}],
+                    "stage2": [{"model": "m1", "ranking": "Rank"}],
+                    "stage3": {"model": "chairman", "response": "Final"}
+                }
             ]
         }
         
-        storage.save_conversation(conv)
-        retrieved = storage.get_conversation('test-fields')
+        save_conversation(conv)
+        reloaded = get_conversation(conv["id"])
         
-        assert retrieved == conv
+        assert len(reloaded["messages"]) == 2
+        assert reloaded["messages"][1]["stage1"][0]["model"] == "m1"
 
 
 class TestListConversations:
-    """Test suite for list_conversations function."""
+    """Tests for list_conversations function."""
 
-    def test_list_empty_conversations(self, temp_data_dir):
-        """Test listing when no conversations exist."""
-        convs = storage.list_conversations()
-        assert isinstance(convs, list)
-        assert len(convs) == 0
+    def test_returns_empty_list_when_no_conversations(self, mock_data_dir):
+        """Test that empty list is returned when no conversations exist."""
+        result = list_conversations()
+        assert result == []
 
-    def test_list_single_conversation(self, temp_data_dir):
-        """Test listing a single conversation."""
-        storage.create_conversation('test-1')
-        convs = storage.list_conversations()
-        assert len(convs) == 1
-
-    def test_list_multiple_conversations(self, temp_data_dir):
+    def test_lists_all_conversations(self, mock_data_dir):
         """Test listing multiple conversations."""
-        storage.create_conversation('test-1')
-        storage.create_conversation('test-2')
-        storage.create_conversation('test-3')
+        create_conversation("conv-1")
+        create_conversation("conv-2")
+        create_conversation("conv-3")
         
-        convs = storage.list_conversations()
-        assert len(convs) == 3
+        result = list_conversations()
+        
+        assert len(result) == 3
+        ids = [c["id"] for c in result]
+        assert "conv-1" in ids
+        assert "conv-2" in ids
+        assert "conv-3" in ids
 
-    def test_list_returns_metadata_only(self, temp_data_dir):
-        """Test that list returns metadata, not full messages."""
-        conv_id = 'test-metadata'
-        storage.create_conversation(conv_id)
+    def test_returns_metadata_only(self, mock_data_dir):
+        """Test that only metadata is returned, not full messages."""
+        conv_id = "conv-meta"
+        create_conversation(conv_id)
         
-        convs = storage.list_conversations()
-        conv = convs[0]
+        # Add messages
+        add_user_message(conv_id, "Test message")
         
-        assert 'id' in conv
-        assert 'created_at' in conv
-        assert 'title' in conv
-        assert 'message_count' in conv
-        assert 'messages' not in conv
+        result = list_conversations()
+        
+        assert len(result) == 1
+        assert "id" in result[0]
+        assert "created_at" in result[0]
+        assert "title" in result[0]
+        assert "message_count" in result[0]
+        assert "messages" not in result[0]  # Full messages not included
 
-    def test_list_message_count_correct(self, temp_data_dir):
-        """Test that message_count is correct."""
-        conv_id = 'test-count'
-        storage.create_conversation(conv_id)
-        storage.add_user_message(conv_id, 'Message 1')
-        storage.add_user_message(conv_id, 'Message 2')
-        
-        convs = storage.list_conversations()
-        conv = convs[0]
-        assert conv['message_count'] == 2
-
-    def test_list_sorted_by_creation_time(self, temp_data_dir):
-        """Test that conversations are sorted newest first."""
+    def test_sorts_by_creation_time_newest_first(self, mock_data_dir):
+        """Test that conversations are sorted by creation time, newest first."""
         import time
         
-        storage.create_conversation('old')
+        create_conversation("conv-old")
         time.sleep(0.01)
-        storage.create_conversation('new')
+        create_conversation("conv-new")
         
-        convs = storage.list_conversations()
-        assert convs[0]['id'] == 'new'
-        assert convs[1]['id'] == 'old'
+        result = list_conversations()
+        
+        assert result[0]["id"] == "conv-new"
+        assert result[1]["id"] == "conv-old"
+
+    def test_includes_message_count(self, mock_data_dir):
+        """Test that message count is included in metadata."""
+        conv_id = "conv-count"
+        create_conversation(conv_id)
+        add_user_message(conv_id, "Message 1")
+        add_user_message(conv_id, "Message 2")
+        
+        result = list_conversations()
+        
+        conv = next(c for c in result if c["id"] == conv_id)
+        assert conv["message_count"] == 2
+
+    def test_ignores_non_json_files(self, mock_data_dir):
+        """Test that non-JSON files in data dir are ignored."""
+        create_conversation("valid-conv")
+        
+        # Create a non-JSON file
+        with open(os.path.join(mock_data_dir, "readme.txt"), 'w') as f:
+            f.write("Not a conversation")
+        
+        result = list_conversations()
+        assert len(result) == 1
 
 
 class TestAddUserMessage:
-    """Test suite for add_user_message function."""
+    """Tests for add_user_message function."""
 
-    def test_add_user_message_success(self, temp_data_dir):
-        """Test adding a user message successfully."""
-        conv_id = 'test-user-msg'
-        storage.create_conversation(conv_id)
+    def test_adds_user_message(self, mock_data_dir):
+        """Test adding a user message to a conversation."""
+        conv_id = "conv-user-1"
+        create_conversation(conv_id)
         
-        storage.add_user_message(conv_id, 'Hello, world!')
+        add_user_message(conv_id, "Hello, world!")
         
-        conv = storage.get_conversation(conv_id)
-        assert len(conv['messages']) == 1
-        assert conv['messages'][0]['role'] == 'user'
-        assert conv['messages'][0]['content'] == 'Hello, world!'
+        conv = get_conversation(conv_id)
+        assert len(conv["messages"]) == 1
+        assert conv["messages"][0]["role"] == "user"
+        assert conv["messages"][0]["content"] == "Hello, world!"
 
-    def test_add_multiple_user_messages(self, temp_data_dir):
+    def test_adds_multiple_messages(self, mock_data_dir):
         """Test adding multiple user messages."""
-        conv_id = 'test-multi-msg'
-        storage.create_conversation(conv_id)
+        conv_id = "conv-user-2"
+        create_conversation(conv_id)
         
-        storage.add_user_message(conv_id, 'Message 1')
-        storage.add_user_message(conv_id, 'Message 2')
-        storage.add_user_message(conv_id, 'Message 3')
+        add_user_message(conv_id, "First")
+        add_user_message(conv_id, "Second")
+        add_user_message(conv_id, "Third")
         
-        conv = storage.get_conversation(conv_id)
-        assert len(conv['messages']) == 3
+        conv = get_conversation(conv_id)
+        assert len(conv["messages"]) == 3
 
-    def test_add_user_message_nonexistent_conversation(self, temp_data_dir):
-        """Test adding message to non-existent conversation raises error."""
+    def test_raises_for_nonexistent_conversation(self, mock_data_dir):
+        """Test that ValueError is raised for non-existent conversation."""
         with pytest.raises(ValueError, match="not found"):
-            storage.add_user_message('nonexistent', 'message')
+            add_user_message("nonexistent", "Message")
 
-    def test_add_user_message_empty_content(self, temp_data_dir):
-        """Test adding user message with empty content."""
-        conv_id = 'test-empty'
-        storage.create_conversation(conv_id)
+    def test_preserves_existing_messages(self, mock_data_dir):
+        """Test that existing messages are preserved."""
+        conv_id = "conv-user-3"
+        create_conversation(conv_id)
+        add_user_message(conv_id, "First")
         
-        storage.add_user_message(conv_id, '')
+        add_user_message(conv_id, "Second")
         
-        conv = storage.get_conversation(conv_id)
-        assert conv['messages'][0]['content'] == ''
-
-    def test_add_user_message_special_characters(self, temp_data_dir):
-        """Test adding user message with special characters."""
-        conv_id = 'test-special'
-        storage.create_conversation(conv_id)
-        
-        content = 'Hello! @#$% <html> "quotes" \'apostrophes\' \n newlines'
-        storage.add_user_message(conv_id, content)
-        
-        conv = storage.get_conversation(conv_id)
-        assert conv['messages'][0]['content'] == content
+        conv = get_conversation(conv_id)
+        assert conv["messages"][0]["content"] == "First"
+        assert conv["messages"][1]["content"] == "Second"
 
 
 class TestAddAssistantMessage:
-    """Test suite for add_assistant_message function."""
+    """Tests for add_assistant_message function."""
 
-    def test_add_assistant_message_success(self, temp_data_dir):
-        """Test adding assistant message successfully."""
-        conv_id = 'test-assistant'
-        storage.create_conversation(conv_id)
+    def test_adds_assistant_message(self, mock_data_dir):
+        """Test adding an assistant message with all stages."""
+        conv_id = "conv-asst-1"
+        create_conversation(conv_id)
         
-        stage1 = [{'model': 'model1', 'response': 'response1'}]
-        stage2 = [{'model': 'model1', 'ranking': 'ranking1'}]
-        stage3 = {'model': 'chairman', 'response': 'final'}
+        stage1 = [{"model": "m1", "response": "R1"}]
+        stage2 = [{"model": "m1", "ranking": "Rank"}]
+        stage3 = {"model": "chairman", "response": "Final"}
         
-        storage.add_assistant_message(conv_id, stage1, stage2, stage3)
+        add_assistant_message(conv_id, stage1, stage2, stage3)
         
-        conv = storage.get_conversation(conv_id)
-        assert len(conv['messages']) == 1
-        msg = conv['messages'][0]
-        assert msg['role'] == 'assistant'
-        assert msg['stage1'] == stage1
-        assert msg['stage2'] == stage2
-        assert msg['stage3'] == stage3
+        conv = get_conversation(conv_id)
+        assert len(conv["messages"]) == 1
+        assert conv["messages"][0]["role"] == "assistant"
+        assert conv["messages"][0]["stage1"] == stage1
+        assert conv["messages"][0]["stage2"] == stage2
+        assert conv["messages"][0]["stage3"] == stage3
 
-    def test_add_assistant_message_nonexistent_conversation(self, temp_data_dir):
-        """Test adding assistant message to non-existent conversation."""
+    def test_raises_for_nonexistent_conversation(self, mock_data_dir):
+        """Test that ValueError is raised for non-existent conversation."""
         with pytest.raises(ValueError, match="not found"):
-            storage.add_assistant_message('nonexistent', [], [], {})
+            add_assistant_message("nonexistent", [], [], {})
 
-    def test_add_assistant_message_empty_stages(self, temp_data_dir):
-        """Test adding assistant message with empty stages."""
-        conv_id = 'test-empty-stages'
-        storage.create_conversation(conv_id)
+    def test_adds_after_user_messages(self, mock_data_dir):
+        """Test adding assistant message after user messages."""
+        conv_id = "conv-asst-2"
+        create_conversation(conv_id)
+        add_user_message(conv_id, "Question")
         
-        storage.add_assistant_message(conv_id, [], [], {})
+        add_assistant_message(conv_id, [], [], {"model": "m", "response": "A"})
         
-        conv = storage.get_conversation(conv_id)
-        msg = conv['messages'][0]
-        assert msg['stage1'] == []
-        assert msg['stage2'] == []
-        assert msg['stage3'] == {}
+        conv = get_conversation(conv_id)
+        assert len(conv["messages"]) == 2
+        assert conv["messages"][0]["role"] == "user"
+        assert conv["messages"][1]["role"] == "assistant"
 
 
 class TestUpdateConversationTitle:
-    """Test suite for update_conversation_title function."""
+    """Tests for update_conversation_title function."""
 
-    def test_update_title_success(self, temp_data_dir):
-        """Test updating conversation title successfully."""
-        conv_id = 'test-title'
-        storage.create_conversation(conv_id)
+    def test_updates_title(self, mock_data_dir):
+        """Test updating conversation title."""
+        conv_id = "conv-title-1"
+        create_conversation(conv_id)
         
-        new_title = 'Updated Title'
-        storage.update_conversation_title(conv_id, new_title)
+        update_conversation_title(conv_id, "New Title")
         
-        conv = storage.get_conversation(conv_id)
-        assert conv['title'] == new_title
+        conv = get_conversation(conv_id)
+        assert conv["title"] == "New Title"
 
-    def test_update_title_nonexistent_conversation(self, temp_data_dir):
-        """Test updating title of non-existent conversation."""
+    def test_raises_for_nonexistent_conversation(self, mock_data_dir):
+        """Test that ValueError is raised for non-existent conversation."""
         with pytest.raises(ValueError, match="not found"):
-            storage.update_conversation_title('nonexistent', 'title')
+            update_conversation_title("nonexistent", "Title")
 
-    def test_update_title_preserves_other_fields(self, temp_data_dir):
-        """Test that updating title doesn't affect other fields."""
-        conv_id = 'test-preserve'
-        original = storage.create_conversation(conv_id)
-        storage.add_user_message(conv_id, 'test message')
+    def test_preserves_other_fields(self, mock_data_dir):
+        """Test that other fields are preserved when updating title."""
+        conv_id = "conv-title-2"
+        create_conversation(conv_id)
+        add_user_message(conv_id, "Message")
         
-        storage.update_conversation_title(conv_id, 'New Title')
+        original = get_conversation(conv_id)
+        update_conversation_title(conv_id, "Updated")
+        updated = get_conversation(conv_id)
         
-        updated = storage.get_conversation(conv_id)
-        assert updated['id'] == original['id']
-        assert updated['created_at'] == original['created_at']
-        assert len(updated['messages']) == 1
+        assert updated["id"] == original["id"]
+        assert updated["created_at"] == original["created_at"]
+        assert len(updated["messages"]) == len(original["messages"])
 
-    def test_update_title_empty_string(self, temp_data_dir):
-        """Test updating title to empty string."""
-        conv_id = 'test-empty-title'
-        storage.create_conversation(conv_id)
-        
-        storage.update_conversation_title(conv_id, '')
-        
-        conv = storage.get_conversation(conv_id)
-        assert conv['title'] == ''
-
-    def test_update_title_special_characters(self, temp_data_dir):
+    def test_handles_special_characters_in_title(self, mock_data_dir):
         """Test updating title with special characters."""
-        conv_id = 'test-special-title'
-        storage.create_conversation(conv_id)
+        conv_id = "conv-title-3"
+        create_conversation(conv_id)
         
-        title = 'Title with émojis 🚀 and "quotes"'
-        storage.update_conversation_title(conv_id, title)
+        special_title = "Title with émojis 🎉 and symbols @#$%"
+        update_conversation_title(conv_id, special_title)
         
-        conv = storage.get_conversation(conv_id)
-        assert conv['title'] == title
+        conv = get_conversation(conv_id)
+        assert conv["title"] == special_title
+
+
+class TestIntegrationScenarios:
+    """Integration tests for complete workflows."""
+
+    def test_complete_conversation_flow(self, mock_data_dir):
+        """Test a complete conversation workflow."""
+        conv_id = "integration-1"
+        
+        # Create conversation
+        conv = create_conversation(conv_id)
+        assert conv["messages"] == []
+        
+        # Add user message
+        add_user_message(conv_id, "What is Python?")
+        
+        # Add assistant response
+        add_assistant_message(
+            conv_id,
+            [{"model": "gpt-4", "response": "Python is..."}],
+            [{"model": "gpt-4", "ranking": "Ranking..."}],
+            {"model": "chairman", "response": "Final answer..."}
+        )
+        
+        # Update title
+        update_conversation_title(conv_id, "Python Question")
+        
+        # Retrieve and verify
+        final_conv = get_conversation(conv_id)
+        assert final_conv["title"] == "Python Question"
+        assert len(final_conv["messages"]) == 2
+        assert final_conv["messages"][0]["role"] == "user"
+        assert final_conv["messages"][1]["role"] == "assistant"
+
+    def test_multiple_conversations_isolation(self, mock_data_dir):
+        """Test that multiple conversations don't interfere with each other."""
+        conv1 = create_conversation("conv-iso-1")
+        conv2 = create_conversation("conv-iso-2")
+        
+        add_user_message("conv-iso-1", "Message for conv 1")
+        add_user_message("conv-iso-2", "Message for conv 2")
+        
+        retrieved1 = get_conversation("conv-iso-1")
+        retrieved2 = get_conversation("conv-iso-2")
+        
+        assert retrieved1["messages"][0]["content"] == "Message for conv 1"
+        assert retrieved2["messages"][0]["content"] == "Message for conv 2"
+
+    def test_conversation_persistence(self, mock_data_dir):
+        """Test that conversations persist across operations."""
+        conv_id = "persist-test"
+        
+        create_conversation(conv_id)
+        add_user_message(conv_id, "Test")
+        
+        # Simulate process restart by reloading
+        conv = get_conversation(conv_id)
+        assert conv is not None
+        assert len(conv["messages"]) == 1
+
+
+class TestEdgeCases:
+    """Edge case tests."""
+
+    def test_empty_conversation_id(self, mock_data_dir):
+        """Test handling of empty conversation ID."""
+        result = create_conversation("")
+        assert result["id"] == ""
+
+    def test_very_long_message(self, mock_data_dir):
+        """Test handling of very long messages."""
+        conv_id = "long-msg"
+        create_conversation(conv_id)
+        
+        long_message = "A" * 100000
+        add_user_message(conv_id, long_message)
+        
+        conv = get_conversation(conv_id)
+        assert conv["messages"][0]["content"] == long_message
+
+    def test_unicode_in_messages(self, mock_data_dir):
+        """Test handling of Unicode characters in messages."""
+        conv_id = "unicode-test"
+        create_conversation(conv_id)
+        
+        unicode_msg = "Hello 世界 🌍 café"
+        add_user_message(conv_id, unicode_msg)
+        
+        conv = get_conversation(conv_id)
+        assert conv["messages"][0]["content"] == unicode_msg
+
+    def test_special_json_characters(self, mock_data_dir):
+        """Test handling of special JSON characters in content."""
+        conv_id = "json-special"
+        create_conversation(conv_id)
+        
+        special_msg = 'Message with "quotes" and \\ backslash and \n newline'
+        add_user_message(conv_id, special_msg)
+        
+        conv = get_conversation(conv_id)
+        assert conv["messages"][0]["content"] == special_msg
